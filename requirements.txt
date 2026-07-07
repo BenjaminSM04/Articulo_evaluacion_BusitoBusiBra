@@ -1,0 +1,45 @@
+# ---- Núcleo de deep learning ----
+# Instala torch/torchvision con la build de CUDA adecuada a tu GPU:
+#   https://pytorch.org/get-started/locally/
+torch>=2.1
+torchvision>=0.16
+timm>=0.9.12            # backbones preentrenados (ResNet-50, EfficientNet-B0, etc.)
+
+# ---- Datos y procesamiento de imagen ----
+# numpy<2.0 por compatibilidad amplia con shap/opencv/torch antiguos; sube si tu stack lo soporta.
+numpy>=1.24,<2.0
+pandas>=2.0
+pillow>=10.0
+opencv-python-headless>=4.8
+scikit-image>=0.21
+# albumentations 2.0 cambió la API de GaussNoise (var_limit -> std_range); fijamos <1.5.
+albumentations>=1.3.1,<1.5
+ImageHash>=4.3          # deduplicación perceptual (problema conocido de BUSI)
+
+# ---- Métricas y validación ----
+scikit-learn>=1.3
+scipy>=1.10
+
+# ---- Explicabilidad (XAI) ----
+grad-cam>=1.5.0         # paquete pytorch-grad-cam
+shap>=0.44
+captum>=0.7             # alternativa de atribuciones (IG, etc.)
+
+# ---- Visualización y reportes ----
+matplotlib>=3.7
+seaborn>=0.13
+tabulate>=0.9            # requerido por pandas.DataFrame.to_markdown (reporte)
+python-docx>=1.1         # exportación de comparative_report.docx
+reportlab>=4.0           # exportación de comparative_report.pdf
+
+# ---- Utilidades ----
+pyyaml>=6.0
+tqdm>=4.66
+tensorboard>=2.14
+kaggle>=1.6             # descarga de datasets desde Kaggle (requiere kaggle.json)
+requests>=2.31
+
+# ---- Calidad de código y pruebas ----
+pytest>=7.4
+black>=23.9
+ruff>=0.1

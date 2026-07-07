@@ -1,0 +1,85 @@
+# ---- Datos: no versionar imagenes medicas ni datasets pesados ----
+data/raw/
+data/processed/
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.dcm
+
+# Excepciones para figuras/documentos incluidos deliberadamente en docs.
+!docs/**/*.png
+!docs/**/*.jpg
+!docs/**/*.jpeg
+
+# ---- Resultados y artefactos generados ----
+results/
+runs/
+*.pt
+*.pth
+*.ckpt
+*.docx
+
+# ---- Articulo cientifico ----
+# El manuscrito se adjuntara como enlace externo; no se versionan borradores ni LaTeX.
+articulo/
+Latex Doc/
+
+# Implementaciones archivadas o notas internas que no forman parte del paquete publico.
+legacy/
+
+# Auxiliares y salidas de compilacion de LaTeX, por si se compila fuera de "Latex Doc/".
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.pdf
+!docs/**/*.pdf
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.venv-*/
+venv/
+env/
+.ipynb_checkpoints/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# ---- Credenciales ----
+kaggle.json
+.env
+.env.*
+*.secret
+
+# ---- Sistema y editores ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ---- Archivos locales de agentes/herramientas ----
+.agents/
+.ars_cache/
+*_material_passport*.json
+paper_draft_*/
+_ars_work/

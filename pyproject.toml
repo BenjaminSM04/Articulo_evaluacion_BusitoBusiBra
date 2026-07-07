@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "busgen"
+version = "0.1.0"
+description = "Generalización cross-domain de modelos DL para clasificación de cáncer de mama en ecografía (BUSI -> BUS-BRA) con adaptación de dominio y XAI."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Benjamin" }]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+lint.select = ["E", "F", "I", "W", "B"]
+lint.ignore = ["E203"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
