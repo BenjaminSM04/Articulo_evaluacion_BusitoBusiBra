@@ -1,0 +1,2 @@
+# El mapeo oficial tiene una huella congelada sobre sus bytes CRLF originales.
+resources/busi_curation/mapping_curated_BUSI.csv -text

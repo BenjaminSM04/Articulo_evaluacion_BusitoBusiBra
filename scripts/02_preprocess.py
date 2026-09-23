@@ -1,8 +1,9 @@
-"""Paso 2 — Preprocesar: deduplicar (BUSI), redimensionar, unificar etiquetas y crear manifests.
+"""Paso 2 — Preprocesar BUS-BRA privado antes de construir las particiones.
 
 Uso:
-    python scripts/02_preprocess.py --config config/config.yaml
-    python scripts/02_preprocess.py --only busi
+    python scripts/02_preprocess.py --config config/config_publication_v3_5seed.yaml
+
+BUSI se cura por separado con scripts/10_curate_busi.py.
 """
 from __future__ import annotations
 
@@ -19,8 +20,8 @@ from src.utils.seed import seed_everything  # noqa: E402
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Preprocesamiento")
-    ap.add_argument("--config", default="config/config.yaml")
-    ap.add_argument("--only", choices=["busi", "bus_bra"], default=None)
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--only", choices=["bus_bra"], default="bus_bra")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
