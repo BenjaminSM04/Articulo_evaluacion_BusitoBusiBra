@@ -7,7 +7,7 @@ name = "busgen"
 version = "0.1.0"
 description = "Generalización cross-domain de modelos DL para clasificación de cáncer de mama en ecografía (BUSI -> BUS-BRA) con adaptación de dominio y XAI."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Benjamin" }]
 
@@ -17,11 +17,11 @@ include = ["src*"]
 
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 lint.select = ["E", "F", "I", "W", "B"]
 lint.ignore = ["E203"]
 

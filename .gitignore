@@ -1,29 +1,39 @@
 # ---- Datos: no versionar imagenes medicas ni datasets pesados ----
-data/raw/
-data/processed/
+/data/
 *.png
 *.jpg
 *.jpeg
 *.bmp
 *.dcm
 
-# Excepciones para figuras/documentos incluidos deliberadamente en docs.
-!docs/**/*.png
-!docs/**/*.jpg
-!docs/**/*.jpeg
-
 # ---- Resultados y artefactos generados ----
-results/
-runs/
+/results/
+/runs/
+/models/
 *.pt
 *.pth
 *.ckpt
+*.safetensors
+*.onnx
+*.npy
+*.npz
+*.parquet
+*.xlsx
+*.zip
+*.7z
+*.csv
+!/resources/busi_curation/mapping_curated_BUSI.csv
+!/resources/busi_curation/dataset_comment_list.csv
+!/resources/busi_curation/busi_pawlowska_sensitivity_audit.csv
 *.docx
 
 # ---- Articulo cientifico ----
 # El manuscrito se adjuntara como enlace externo; no se versionan borradores ni LaTeX.
 articulo/
 Latex Doc/
+/publication_package/
+/_jbc_work/
+/OJEMB/
 
 # Implementaciones archivadas o notas internas que no forman parte del paquete publico.
 legacy/
@@ -43,7 +53,6 @@ legacy/
 *.synctex.gz
 *.toc
 *.pdf
-!docs/**/*.pdf
 
 # ---- Python ----
 __pycache__/
@@ -70,6 +79,8 @@ kaggle.json
 .env
 .env.*
 *.secret
+*.pem
+*.key
 
 # ---- Sistema y editores ----
 .DS_Store

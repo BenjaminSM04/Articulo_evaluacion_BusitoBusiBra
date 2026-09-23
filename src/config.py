@@ -1,8 +1,8 @@
-"""Load and validate the central YAML configuration.
+"""Load and validate the explicitly selected YAML protocol configuration.
 
-A single ``config/config.yaml`` is the source of truth for every script. This module loads it into
-a dot-accessible object, resolves all paths relative to the project root, and creates the output
-directories. Keeping config centralized is what makes runs reproducible.
+This module loads a chosen configuration into a dot-accessible object, resolves all paths
+relative to the project root, and creates the output directories. Requiring a path prevents
+accidentally selecting the historical v2 protocol for a future review run.
 
 Implementation note: nested dicts are converted to ``DotDict`` **in place** at load time, so that
 both ``cfg.model.architecture`` and ``cfg.model["architecture"] = x`` operate on the same object.
@@ -94,6 +94,6 @@ class Config(DotDict):
             yaml.safe_dump(plain, fh, sort_keys=False, allow_unicode=True)
 
 
-def load_config(path: str | Path = "config/config.yaml") -> Config:
-    """Convenience loader used by all entry-point scripts."""
+def load_config(path: str | Path) -> Config:
+    """Load an explicitly selected protocol; never select a historical default."""
     return Config.load(path)

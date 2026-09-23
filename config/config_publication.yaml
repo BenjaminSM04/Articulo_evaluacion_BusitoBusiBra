@@ -1,0 +1,118 @@
+# Protocolo confirmatorio para la versión publicable del manuscrito.
+# Congelado antes de habilitar la inferencia sobre target_test.
+
+seed: 42
+device: cuda
+
+paths:
+  data_raw: data/raw
+  data_processed: data/processed
+  results: results/publication_v2
+  models: results/publication_v2/checkpoints
+  figures: results/publication_v2/figures
+  reports: results/publication_v2/reports
+
+datasets:
+  busi:
+    name: Curated BUSI
+    origin: "Egipto (El Cairo)"
+    raw_dir: data/raw/curated_busi_v1/Curated BUSI
+    manifest: data/processed/busi_curated_manifest.csv
+    curation_doi: "10.5281/zenodo.19047974"
+    curation_mapping_sha256: "4aa2096b4b8ef34d3dc03ddcd513f059020601ef89f2dc06741214f1e197f848"
+  bus_bra:
+    name: BUS-BRA
+    origin: "Brasil (Río de Janeiro)"
+    raw_dir: data/raw/BUS-BRA
+    manifest: data/processed/bus_bra_manifest.csv
+    runtime_pixels: original_path
+
+task:
+  classes: [benign, malignant]
+  positive_class: malignant
+
+preprocessing:
+  image_size: 224
+  to_rgb: true
+  normalize_mean: [0.485, 0.456, 0.406]
+  normalize_std: [0.229, 0.224, 0.225]
+
+augmentation:
+  horizontal_flip: 0.5
+  rotation_limit: 15
+  brightness_contrast: 0.2
+  # Varianza expresada en unidades de píxel de 8 bits; el código la convierte
+  # explícitamente a std_range para Albumentations 2.
+  gaussian_noise_var: [10.0, 50.0]
+
+model:
+  architecture: resnet18
+  pretrained: true
+  num_classes: 2
+  dropout: 0.3
+
+training:
+  epochs: 30
+  batch_size: 16
+  lr: 0.0001
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: cosine
+  mixed_precision: true
+  num_workers: 2
+  class_weights: balanced
+  label_smoothing: 0.0
+
+cross_validation:
+  n_folds: 5
+  stratified: true
+  group_by_patient: true
+  val_fraction: 0.20
+
+evaluation:
+  primary_unit: patient
+  patient_aggregation: mean_logit
+  seed_aggregation:
+    rule: mean_logit_ensemble
+    methods: [source_direct, source_only_matched, dann, coral, mmd]
+    finetune: per_replica_only
+  primary_metric: auc
+  n_bootstrap: 5000
+  ci_level: 0.95
+  threshold_rule: youden
+  multiplicity: holm
+
+publication:
+  protocol_version: "2.0"
+  split_seed: 20260723
+  target_calibration_fraction_of_adapt_pool: 0.1666666667
+  source_test_fraction: 0.20
+  source_val_fraction_of_remainder: 0.20
+  architectures: [resnet18, efficientnet_b0]
+  seeds: [17, 42, 73]
+  methods: [source_only_matched, dann, coral, mmd]
+  finetune_fractions: [0.05, 0.10, 0.20]
+  adaptation:
+    epochs: 15
+    lr: 0.00005
+    weight_decay: 0.0001
+    domain_weight: 1.0
+    align_weight: 1.0
+    align_warmup_epochs: 5
+    lr_warmup_epochs: 0
+    freeze_batchnorm_running_stats: true
+    mmd_sigmas: [1, 2, 4, 8, 16]
+    dann_lambda: 1.0
+  finetune:
+    epochs: 20
+    lr: 0.00005
+    weight_decay: 0.0001
+    lr_warmup_epochs: 0
+    selection_rule: fixed_final_epoch
+  source:
+    epochs: 30
+    lr: 0.0001
+    lr_warmup_epochs: 3
+  locked_test:
+    # `train` no carga target_test. Solo `finalize` puede habilitarlo.
+    require_finalize_flag: true
