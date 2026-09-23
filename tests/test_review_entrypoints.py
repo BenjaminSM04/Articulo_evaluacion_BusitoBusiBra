@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import runpy
 import subprocess
 import sys
-import runpy
 from pathlib import Path
 
 import pytest
@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @pytest.mark.parametrize(
     ("command", "required_option"),
     [
+        (["scripts/02_preprocess.py"], "--config"),
         (["scripts/11_run_publication_experiments.py"], "--config"),
         (["scripts/12_finalize_publication_inference.py"], "--config"),
         (["scripts/13_analyze_publication_results.py"], "--config"),
@@ -49,3 +50,23 @@ def test_split_cli_requires_an_explicit_protocol() -> None:
     with pytest.raises(SystemExit) as error:
         module["build_cli_parser"]().parse_args([])
     assert error.value.code == 2
+
+
+def test_legacy_busi_preprocessor_is_not_a_review_entrypoint() -> None:
+    process = subprocess.run(
+        [sys.executable, "scripts/02_preprocess.py", "--config", "absent.yaml", "--only", "busi"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert process.returncode == 2
+    assert "busi" in process.stderr
+
+
+def test_missing_review_split_points_to_existing_split_cli(tmp_path) -> None:
+    module = runpy.run_path(str(ROOT / "scripts/11_run_publication_experiments.py"))
+    with pytest.raises(FileNotFoundError) as error:
+        module["_read_manifest"](tmp_path / "source_train_manifest.csv")
+    assert "python -m src.data.publication_splits" in str(error.value)

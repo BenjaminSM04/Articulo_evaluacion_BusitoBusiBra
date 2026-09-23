@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import atexit
 import hashlib
 import json
 import os
@@ -11,7 +10,7 @@ import platform
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
@@ -21,7 +20,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.config import load_config  # noqa: E402
+from src.config import Config, load_config  # noqa: E402
 from src.evaluation.publication_protocol import (  # noqa: E402
     aggregate_patients,
     apply_temperature,
@@ -134,6 +133,15 @@ def _acquire_finalization_transition(results: Path) -> Path:
 
 def _release_transition(lock: Path) -> None:
     lock.unlink(missing_ok=True)
+
+
+def _run_with_finalization_lock(results: Path, action: Callable[[], Any]) -> Any:
+    """Keep the training/finalization exclusion lock through artifact completion."""
+    lock = _acquire_finalization_transition(results)
+    try:
+        return action()
+    finally:
+        _release_transition(lock)
 
 
 def _freeze_test_access(
@@ -405,8 +413,15 @@ def main() -> None:
     requested_cfg = load_config(args.config)
     root = requested_cfg._root
     results = requested_cfg.path("results")
-    transition_lock = _acquire_finalization_transition(results)
-    atexit.register(_release_transition, transition_lock)
+    _run_with_finalization_lock(
+        results,
+        lambda: _finalize_locked(args, requested_cfg, root, results),
+    )
+
+
+def _finalize_locked(
+    args: argparse.Namespace, requested_cfg: Config, root: Path, results: Path
+) -> None:
     effective_config_path = results / "effective_config.yaml"
     training_provenance_path = results / "logs" / "training_provenance.json"
     if not effective_config_path.exists() or not training_provenance_path.exists():
@@ -482,9 +497,6 @@ def main() -> None:
         preliminary_fingerprint,
         resume=args.resume,
     )
-    _release_transition(transition_lock)
-    atexit.unregister(_release_transition)
-
     manifest_paths = {
         "source_train_manifest_sha256": splits / "source_train_manifest.csv",
         "source_val_manifest_sha256": splits / "source_val_manifest.csv",

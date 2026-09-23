@@ -73,7 +73,8 @@ def _now() -> str:
 def _read_manifest(path: Path, *, patient: bool = False) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(
-            f"Missing prepared split {path}. Run scripts/10_prepare_publication_data.py first."
+            f"Missing prepared split {path}. After protocol approval, run "
+            "python -m src.data.publication_splits --config <config> first."
         )
     dtype = {"sample_id": str}
     if patient:
