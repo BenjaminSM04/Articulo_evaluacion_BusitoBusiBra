@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FILE_BYTES = 1_000_000
 ROOT_FILES = {
+    ".gitattributes",
     ".gitignore",
     "README.md",
     "pyproject.toml",

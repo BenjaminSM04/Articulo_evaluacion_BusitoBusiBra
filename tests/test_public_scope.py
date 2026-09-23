@@ -9,6 +9,7 @@ forbidden_path = scope.forbidden_path
 
 def test_public_scope_allows_only_the_selected_busi_tables() -> None:
     for path in (
+        ".gitattributes",
         "README.md",
         ".github/workflows/ci.yml",
         "config/config_publication_v3_5seed.yaml",
