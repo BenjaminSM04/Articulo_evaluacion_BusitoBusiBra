@@ -22,6 +22,8 @@ CONFIG_FILES = {
 DOC_FILES = {
     "docs/PROTOCOL_PUBLICATION_V2.md",
     "docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md",
+    "docs/PREPARACION_V3.md",
+    "docs/plans/2026-09-23-v3-local-controls.md",
 }
 RESOURCE_FILES = {
     "resources/busi_curation/README.md",
