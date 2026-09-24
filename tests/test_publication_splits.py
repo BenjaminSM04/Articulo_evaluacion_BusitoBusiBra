@@ -508,17 +508,21 @@ def test_source_only_writes_source_artifacts_and_does_not_touch_existing_target_
     output_dir.mkdir()
     target = output_dir / "target_test_manifest.csv"
     target.write_text("reserved-target-sentinel\n", encoding="utf-8")
+    global_hashes = output_dir / "assignment_hashes.json"
+    global_hashes.write_text('{"target_assignments":"reserved"}\n', encoding="utf-8")
 
     create_publication_source_only_files(source, audit, output_dir, seed=20260723)
 
     assert target.read_text(encoding="utf-8") == "reserved-target-sentinel\n"
+    assert global_hashes.read_text(encoding="utf-8") == '{"target_assignments":"reserved"}\n'
     assert {path.name for path in output_dir.iterdir()} == {
         "target_test_manifest.csv",
+        "assignment_hashes.json",
         "source_assignments.csv",
         "source_train_manifest.csv",
         "source_val_manifest.csv",
         "source_test_manifest.csv",
-        "assignment_hashes.json",
+        "source_assignment_hashes.json",
         "source_split_metadata.json",
     }
 
