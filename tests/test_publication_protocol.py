@@ -6,6 +6,8 @@ import pytest
 import torch
 from sklearn.metrics import log_loss
 
+from src.config import Config
+from src.evaluation import publication_protocol as inference_module
 from src.evaluation.publication_protocol import (
     aggregate_patients,
     apply_temperature,
@@ -106,3 +108,45 @@ def test_freezing_batchnorm_preserves_running_statistics() -> None:
 
     assert torch.equal(batchnorm.running_mean, before)
     assert batchnorm.weight.grad is not None
+
+
+@pytest.mark.parametrize("preprocessing", ["none", "intensity", "roi"])
+def test_inference_uses_checkpoint_preprocessing(monkeypatch, tmp_path, preprocessing) -> None:
+    observed = []
+
+    class SyntheticDataset:
+        def __init__(self, frame, root, transform, *, preprocessing):
+            observed.append(preprocessing)
+            self.frame = frame
+
+        def __len__(self):
+            return len(self.frame)
+
+        def __getitem__(self, index):
+            return torch.zeros(3, 4, 4), 0, index
+
+    class ConstantModel(torch.nn.Module):
+        def forward(self, images):
+            return torch.zeros(len(images), 2)
+
+    monkeypatch.setattr(inference_module, "UltrasoundDataset", SyntheticDataset)
+    monkeypatch.setattr(inference_module, "build_eval_transforms", lambda cfg: None)
+    monkeypatch.setattr(
+        inference_module,
+        "load_publication_model",
+        lambda checkpoint_path, cfg: (ConstantModel(), {}),
+    )
+    cfg = Config({
+        "device": "cpu",
+        "training": {"num_workers": 0, "batch_size": 2, "mixed_precision": False},
+    })
+    cfg._control_preprocessing = preprocessing
+    frame = pd.DataFrame({
+        "sample_id": ["synthetic-1"], "image_path": ["unused.png"],
+        "label": ["benign"], "label_idx": [0],
+    })
+
+    output, _ = inference_module.infer_logits(tmp_path / "unused.pt", frame, tmp_path, cfg)
+
+    assert observed == [preprocessing]
+    assert output.sample_id.tolist() == ["synthetic-1"]
