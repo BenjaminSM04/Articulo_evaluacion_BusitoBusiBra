@@ -9,7 +9,7 @@ import numpy as np
 
 
 def percentile_normalize_rgb(image: np.ndarray) -> np.ndarray:
-    """Normaliza canales RGB uint8 con los percentiles espaciales 1 y 99."""
+    """Normaliza RGB uint8 con los percentiles 1 y 99 de todos los canales juntos."""
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError("La imagen debe tener forma HxWx3 (RGB).")
     if image.dtype != np.uint8:
@@ -17,19 +17,11 @@ def percentile_normalize_rgb(image: np.ndarray) -> np.ndarray:
     if image.shape[0] == 0 or image.shape[1] == 0:
         raise ValueError("La imagen RGB no puede estar vacía.")
 
-    limits = np.percentile(image, (1, 99), axis=(0, 1))
-    lower, upper = limits
-    spans = upper - lower
-    normalized = np.zeros(image.shape, dtype=np.uint8)
-    valid_channels = spans > 0
-    if np.any(valid_channels):
-        scaled = (
-            (image[:, :, valid_channels].astype(np.float64) - lower[valid_channels])
-            / spans[valid_channels]
-            * 255.0
-        )
-        normalized[:, :, valid_channels] = np.clip(scaled, 0, 255).astype(np.uint8)
-    return normalized
+    lower, upper = np.percentile(image, (1, 99))
+    if upper <= lower:
+        return np.zeros(image.shape, dtype=np.uint8)
+    scaled = (image.astype(np.float64) - lower) / (upper - lower) * 255.0
+    return np.clip(scaled, 0, 255).astype(np.uint8)
 
 
 def crop_union_roi(image: np.ndarray, masks: Sequence[np.ndarray]) -> np.ndarray:

@@ -8,7 +8,7 @@ import pytest
 from src.training.control_preprocessing import crop_union_roi, percentile_normalize_rgb
 
 
-def test_percentile_normalize_rgb_uses_original_channel_percentiles() -> None:
+def test_percentile_normalize_rgb_uses_original_pooled_rgb_percentiles() -> None:
     image = np.zeros((10, 2, 3), dtype=np.uint8)
     image[:, 0, 0] = np.arange(10, dtype=np.uint8)
     image[:, 1, 0] = 100
@@ -17,12 +17,12 @@ def test_percentile_normalize_rgb_uses_original_channel_percentiles() -> None:
 
     normalized = percentile_normalize_rgb(image)
 
-    # p1/p99 of red are 0.09/99.01, from all 20 source pixels, not a resized image.
-    assert normalized[0, 0].tolist() == [0, 0, 0]
+    # All 60 original RGB values share p1=0 and p99=100, before any resize.
+    assert normalized[0, 0].tolist() == [0, 17, 0]
     assert normalized[9, 1, 0] == 255
-    assert normalized[:, :, 1].tolist() == [[0, 0]] * 10
-    assert normalized[0, 1, 2] == 11
-    assert normalized[9, 1, 2] == 255
+    assert normalized[:, :, 1].tolist() == [[17, 17]] * 10
+    assert normalized[0, 1, 2] == 2
+    assert normalized[9, 1, 2] == 48
     assert normalized.dtype == np.uint8
 
 
@@ -36,10 +36,10 @@ def test_percentile_normalize_rgb_clips_outliers_and_returns_new_array() -> None
     normalized = percentile_normalize_rgb(image)
 
     assert normalized[0, 0, 0] == 0
-    assert normalized[1, 0, 0] == 127
+    assert normalized[1, 0, 0] == 255
     assert normalized[-1, -1, 0] == 255
     assert np.all(normalized[:, :, 1] == 0)
-    assert np.all(normalized[:, :, 2] == 0)
+    assert np.all(normalized[:, :, 2] == 107)
     assert not np.shares_memory(normalized, image)
 
 
@@ -48,6 +48,14 @@ def test_percentile_normalize_rgb_rejects_non_rgb_or_non_uint8_input() -> None:
         percentile_normalize_rgb(np.zeros((2, 2), dtype=np.uint8))
     with pytest.raises(ValueError, match="uint8"):
         percentile_normalize_rgb(np.zeros((2, 2, 3), dtype=np.float32))
+
+
+def test_percentile_normalize_rgb_returns_zeros_for_pooled_null_range() -> None:
+    image = np.full((4, 5, 3), 42, dtype=np.uint8)
+    normalized = percentile_normalize_rgb(image)
+    assert normalized.dtype == np.uint8
+    assert normalized.shape == image.shape
+    assert np.count_nonzero(normalized) == 0
 
 
 def test_crop_union_roi_uses_inclusive_box_and_ceil_margin_per_dimension() -> None:
