@@ -1,8 +1,9 @@
-# Reanalisis descriptivo posrevision: cinco semillas nuevas bajo un mismo entorno.
+# Reanalisis descriptivo posrevision: cohorte fuente v3 de 358 imagenes y cinco semillas.
 # No reabre ni modifica results/publication_v2. Esta configuracion conserva los
-# hiperparametros v2, pero corrige grupos relacionados que cruzaban particiones
-# fuente; v2 y v3 no son una comparacion exclusiva de semillas. AdaBN,
-# normalizacion y ROI son controles adicionales aun pendientes.
+# hiperparametros v2. El modo --source-only aplica las exclusiones auditadas,
+# agrupa los pares revisados y escribe solo particiones/huellas de la fuente.
+# v2 y v3 no son una comparacion exclusiva de semillas. AdaBN, normalizacion y
+# ROI son controles adicionales aun pendientes.
 
 seed: 42
 device: cuda
@@ -84,7 +85,7 @@ evaluation:
   multiplicity: holm
 
 publication:
-  protocol_version: "3.0-review-5seed"
+  protocol_version: "3.1-source-cohort-review-5seed"
   source_group_audit: resources/busi_curation/busi_pawlowska_sensitivity_audit.csv
   split_seed: 20260723
   target_calibration_fraction_of_adapt_pool: 0.1666666667
