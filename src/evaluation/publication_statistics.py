@@ -33,6 +33,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+from .metrics import binary_nll
 from .publication_protocol import (
     calibration_intercept_slope,
     fit_temperature,
@@ -69,6 +70,9 @@ ENSEMBLE_METHODS = (
     COMPARATOR_METHOD,
     *UDA_METHODS,
 )
+PRIMARY_COMPARISON_METHODS = ("dann", "coral", "mmd")
+SECONDARY_COMPARISON_METHODS = ("adabn", "intensity", "roi")
+V3_ARCHITECTURES = ("resnet18", "efficientnet_b0")
 
 
 def _canonical_record_sha256(record: Mapping[str, Any]) -> str:
@@ -927,6 +931,176 @@ def holm_adjust(p_values: Sequence[float]) -> np.ndarray:
         running = max(running, candidate)
         adjusted[position] = min(1.0, running)
     return adjusted
+
+
+def _validate_v3_binary_predictions(
+    y_true: Sequence[int], y_prob: Sequence[float], *, source: str
+) -> tuple[np.ndarray, np.ndarray]:
+    labels = np.asarray(y_true)
+    probabilities = np.asarray(y_prob, dtype=float)
+    if labels.ndim != 1 or probabilities.ndim != 1 or len(labels) != len(probabilities):
+        raise ValueError(f"{source} requires aligned one-dimensional labels and probabilities.")
+    if not len(labels) or not np.isin(labels, (0, 1)).all():
+        raise ValueError(f"{source} requires non-empty binary labels.")
+    if not np.isfinite(probabilities).all() or np.any((probabilities < 0) | (probabilities > 1)):
+        raise ValueError(f"{source} requires finite probabilities between zero and one.")
+    return labels.astype(int), probabilities
+
+
+def threshold_sensitivity_panel(
+    y_true_evaluation: Sequence[int],
+    y_prob_evaluation: Sequence[float],
+    *,
+    source_val: tuple[Sequence[int], Sequence[float]],
+    calibration: tuple[Sequence[int], Sequence[float]] | None = None,
+    ece_bins: int = 10,
+) -> list[dict[str, Any]]:
+    """Evaluate fixed and validation-selected thresholds on one unchanged cohort.
+
+    ``source_val`` must contain source validation labels/probabilities. The optional
+    ``calibration`` pair is used only when explicitly supplied by the caller. NLL,
+    Brier and ECE always describe the evaluation probabilities, independent of threshold.
+    """
+    labels, probabilities = _validate_v3_binary_predictions(
+        y_true_evaluation,
+        y_prob_evaluation,
+        source="Evaluation cohort",
+    )
+    if ece_bins < 1:
+        raise ValueError("ECE bin count must be positive.")
+    selection_sets = [("fixed_0.5", None, None, 0.5)]
+    validation_labels, validation_probabilities = _validate_v3_binary_predictions(
+        source_val[0], source_val[1], source="source_val Youden selection"
+    )
+    if len(np.unique(validation_labels)) != 2:
+        raise ValueError("Youden selection requires both outcome classes in source_val.")
+    selection_sets.append(
+        (
+            "source_val",
+            validation_labels,
+            validation_probabilities,
+            select_youden_threshold(validation_labels, validation_probabilities),
+        )
+    )
+    if calibration is not None:
+        calibration_labels, calibration_probabilities = _validate_v3_binary_predictions(
+            calibration[0], calibration[1], source="caller-provided calibration Youden selection"
+        )
+        if len(np.unique(calibration_labels)) != 2:
+            raise ValueError("Youden selection requires both outcome classes in calibration.")
+        selection_sets.append(
+            (
+                "caller_provided_calibration",
+                calibration_labels,
+                calibration_probabilities,
+                select_youden_threshold(calibration_labels, calibration_probabilities),
+            )
+        )
+
+    brier = float(brier_score_loss(labels, probabilities))
+    nll = binary_nll(labels, probabilities)
+    ece = risk_ece(labels, probabilities, bins=ece_bins)
+    rows: list[dict[str, Any]] = []
+    for source, _, _, threshold in selection_sets:
+        predicted = probabilities >= threshold
+        positives = labels == 1
+        negatives = labels == 0
+        tp = int(np.count_nonzero(predicted & positives))
+        tn = int(np.count_nonzero(~predicted & negatives))
+        rows.append(
+            {
+                "threshold_source": source,
+                "threshold": float(threshold),
+                "sensitivity": float(tp / positives.sum()) if positives.any() else float("nan"),
+                "specificity": float(tn / negatives.sum()) if negatives.any() else float("nan"),
+                "nll": nll,
+                "brier": brier,
+                "ece": ece,
+                "evaluation_n": int(len(labels)),
+                "evaluation_n_positive": int(positives.sum()),
+            }
+        )
+    return rows
+
+
+def describe_hyperparameter_sensitivity(
+    observations: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Copy sensitivity-analysis observations as descriptive rows without p-values."""
+    rows: list[dict[str, Any]] = []
+    for observation in observations:
+        if "parameter" not in observation or "value" not in observation:
+            raise ValueError("Sensitivity observations require parameter and value fields.")
+        rows.append(
+            {
+                key: value
+                for key, value in observation.items()
+                if key not in {"p_value", "p_adjusted", "p_holm", "reject_holm_0_05"}
+            }
+        )
+    return rows
+
+
+def compare_v3_method_families(
+    predictions: Mapping[tuple[str, str], tuple[Sequence[int], Sequence[float]]],
+    *,
+    architectures: Sequence[str] = V3_ARCHITECTURES,
+) -> list[dict[str, Any]]:
+    """Compare each v3 method with its matched baseline using family-wise Holm tests.
+
+    Inputs are aligned evaluation-cohort labels/probabilities keyed by architecture and
+    method. Primary and secondary DeLong p-values are adjusted in independent families.
+    """
+    architecture_values = tuple(architectures)
+    if len(architecture_values) != 2 or len(set(architecture_values)) != 2:
+        raise ValueError("v3 comparison requires exactly two distinct architectures.")
+    family_methods = (
+        ("primary", PRIMARY_COMPARISON_METHODS),
+        ("secondary", SECONDARY_COMPARISON_METHODS),
+    )
+    rows: list[dict[str, Any]] = []
+    for family, methods in family_methods:
+        start = len(rows)
+        for architecture in architecture_values:
+            comparator_key = (architecture, COMPARATOR_METHOD)
+            if comparator_key not in predictions:
+                raise ValueError(f"Missing v3 prediction entry {comparator_key}.")
+            comparator_labels, comparator_probabilities = _validate_v3_binary_predictions(
+                *predictions[comparator_key], source=f"{architecture}/{COMPARATOR_METHOD}"
+            )
+            for method in methods:
+                key = (architecture, method)
+                if key not in predictions:
+                    raise ValueError(f"Missing v3 prediction entry {key}.")
+                labels, probabilities = _validate_v3_binary_predictions(
+                    *predictions[key], source=f"{architecture}/{method}"
+                )
+                if not np.array_equal(labels, comparator_labels):
+                    raise ValueError(
+                        f"{architecture}/{method} and {COMPARATOR_METHOD} require aligned labels."
+                    )
+                comparison = paired_delong_test(
+                    comparator_labels,
+                    probabilities,
+                    comparator_probabilities,
+                )
+                rows.append(
+                    {
+                        "family": family,
+                        "arch": architecture,
+                        "method": method,
+                        "comparator": COMPARATOR_METHOD,
+                        "n_evaluation": int(len(labels)),
+                        **comparison,
+                    }
+                )
+        family_rows = rows[start:]
+        adjusted = holm_adjust([row["p_value"] for row in family_rows])
+        for row, p_holm in zip(family_rows, adjusted, strict=True):
+            row["p_holm"] = float(p_holm)
+            row["reject_holm_0_05"] = bool(p_holm < 0.05)
+            row["n_holm_comparisons"] = len(family_rows)
+    return rows
 
 
 def _load_cohort_seed_tables(
