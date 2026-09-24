@@ -59,6 +59,21 @@ def find_threshold_youden(y_true: np.ndarray, y_prob: np.ndarray) -> float:
     return float(thr[np.argmax(tpr - fpr)])
 
 
+def binary_nll(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+    """Mean Bernoulli negative log likelihood with finite endpoint clipping."""
+
+    labels = np.asarray(y_true)
+    probabilities = np.asarray(y_prob, dtype=float)
+    if labels.ndim != 1 or probabilities.ndim != 1 or len(labels) != len(probabilities):
+        raise ValueError("NLL requiere vectores de igual longitud")
+    if len(labels) == 0 or not np.isin(labels, [0, 1]).all():
+        raise ValueError("NLL requiere etiquetas binarias no vacias")
+    if not np.isfinite(probabilities).all() or np.any((probabilities < 0) | (probabilities > 1)):
+        raise ValueError("NLL requiere probabilidades finitas entre 0 y 1")
+    clipped = np.clip(probabilities, 1e-15, 1 - 1e-15)
+    return float(-np.mean(labels * np.log(clipped) + (1 - labels) * np.log1p(-clipped)))
+
+
 def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5) -> dict:
     """Panel completo de métricas para clasificación binaria benigno/maligno."""
     y_true = np.asarray(y_true).astype(int)
@@ -87,6 +102,7 @@ def compute_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0
         "pr_auc": float(pr_auc),
         "brier": float(brier_score_loss(y_true, y_prob)) if len(np.unique(y_true)) > 1 else float("nan"),
         "ece": float(expected_calibration_error(y_true, y_prob)),
+        "nll": binary_nll(y_true, y_prob),
         "threshold": float(threshold),
         "n": int(len(y_true)),
         "n_pos": int(tp + fn),
