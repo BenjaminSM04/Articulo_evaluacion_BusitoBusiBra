@@ -16,6 +16,10 @@ opencv-python-headless==4.11.0.86
 scikit-image==0.26.0
 # GaussNoise usa std_range; el código convierte varianza de píxel mediante sqrt(var)/255.
 albumentations==2.0.8
+# Dependencias transitivas de albucore. La serie 5.x de stringzilla no publica
+# wheel para CPython 3.11/Windows; se conservan las versiones auditadas en v2.
+stringzilla==4.6.2
+simsimd==6.5.16
 ImageHash==4.3.2        # deduplicación perceptual (problema conocido de BUSI)
 
 # ---- Métricas y validación ----

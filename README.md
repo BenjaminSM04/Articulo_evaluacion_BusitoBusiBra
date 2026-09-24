@@ -36,6 +36,19 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pytest -q tests
 ```
 
+Para la ejecucion local con GPU de v3 se verificaron Python 3.11.9,
+PyTorch 2.5.1+cu121 y torchvision 0.20.1+cu121 en Windows. Tras crear una
+`.venv` nueva con ese Python, instala PyTorch desde el indice CUDA 12.1 y
+luego las dependencias fijadas:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install torch==2.5.1+cu121 torchvision==0.20.1+cu121 --index-url https://download.pytorch.org/whl/cu121
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0))"
+```
+
 Si `python --version` indica otra versión, instala o selecciona explícitamente un ejecutable Python 3.11 para crear el entorno. En particular, el Python 3.13 del sistema no sirve para esta configuración fijada. El entorno embebido del respaldo local no forma parte del repositorio público.
 
 La CI usa Python 3.11, PyTorch CPU, Ruff sobre el código de revisión y estas pruebas. No descarga datos ni llama a los scripts de entrenamiento o inferencia. Las pruebas crean únicamente fixtures temporales sintéticos; no producen checkpoints del estudio.
