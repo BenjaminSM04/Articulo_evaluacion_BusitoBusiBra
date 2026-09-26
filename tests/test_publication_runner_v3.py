@@ -308,6 +308,14 @@ def test_v3_missing_weights_leave_no_frozen_run_state(tmp_path: Path, monkeypatc
         runner._run_v3(cfg, args)
     assert not (results / "effective_config.yaml").exists()
 
+    args.full_no_pilot = True
+    monkeypatch.setattr(runner, "_imagenet_weights_sha256", missing_weights)
+    with pytest.raises(FileNotFoundError, match="timm cache missing"):
+        runner._run_v3(cfg, args)
+    assert not (results / "effective_config.yaml").exists()
+    args.full_no_pilot = False
+    monkeypatch.setattr(runner, "_imagenet_weights_sha256", lambda: ({}, {}))
+
     import timm.models._hub as timm_hub
 
     original_download = timm_hub.hf_hub_download

@@ -803,7 +803,11 @@ def _run_v3(cfg: Config, args) -> None:
     results = cfg.path("results")
     checkpoints = results / "checkpoints"
     splits = results / "splits"
-    if not args.pilot and not (results / "logs" / "v3_pilot_gate.json").is_file():
+    if (
+        not args.pilot
+        and not getattr(args, "full_no_pilot", False)
+        and not (results / "logs" / "v3_pilot_gate.json").is_file()
+    ):
         raise RuntimeError("Falta el piloto v3 y su gate de proyección.")
     if args.pilot and args.stage != "all":
         raise ValueError("El piloto ejecutable requiere --stage all para completar 20 trabajos.")
@@ -914,7 +918,7 @@ def _run_v3(cfg: Config, args) -> None:
                 "hours": previous_hours, "completed_jobs": len(indexed)
             })
             _write_v3_json(session_path, {"active": False, "hours": previous_hours})
-        if not args.pilot:
+        if not args.pilot and not getattr(args, "full_no_pilot", False):
             pilot_path = logs / "v3_pilot_gate.json"
             if not pilot_path.exists():
                 raise RuntimeError("Falta el piloto v3 y su gate de proyección.")
@@ -943,7 +947,9 @@ def _run_v3(cfg: Config, args) -> None:
                 float(row["duration_hours"]) for row in status_rows
                 if row.get("status") == "success" and row.get("duration_hours") not in ("", None)
             ]
-            if _should_pause_before_job(elapsed_hours, args.max_wall_hours, observed_hours):
+            if not getattr(args, "full_no_pilot", False) and _should_pause_before_job(
+                elapsed_hours, args.max_wall_hours, observed_hours
+            ):
                 print(f"[pausa] Tiempo acumulado {elapsed_hours:.2f} h; reanudar con --resume")
                 break
             _check_v3_resources(
@@ -1130,10 +1136,15 @@ def main() -> None:
     parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--plan-only", action="store_true")
     parser.add_argument("--pilot", action="store_true")
+    parser.add_argument("--full-no-pilot", action="store_true",
+                        help="Ejecuta la matriz completa sin piloto ni límite horario")
     parser.add_argument("--stage", choices=("main", "controls", "sensitivity", "all"),
                         default="all")
     parser.add_argument("--max-wall-hours", type=float, default=18.0)
     args = parser.parse_args()
+
+    if args.pilot and args.full_no_pilot:
+        parser.error("--pilot y --full-no-pilot son excluyentes")
 
     cfg = load_config(args.config, create_dirs=not args.plan_only)
     is_v3 = str(cfg.publication.protocol_version).startswith("3.")
@@ -1147,11 +1158,11 @@ def main() -> None:
             parser.error(
                 "v3 usa la matriz canónica; no admite --architectures, --seeds ni --source-only"
             )
-        if not 0 < args.max_wall_hours <= 18:
+        if not args.full_no_pilot and not 0 < args.max_wall_hours <= 18:
             parser.error("--max-wall-hours debe estar entre 0 y 18")
         _run_v3(cfg, args)
         return
-    if args.pilot or args.stage != "all" or args.max_wall_hours != 18.0:
+    if args.pilot or args.full_no_pilot or args.stage != "all" or args.max_wall_hours != 18.0:
         parser.error("--pilot, --stage y --max-wall-hours requieren protocolo v3")
     root = cfg._root
     results = cfg.path("results")
