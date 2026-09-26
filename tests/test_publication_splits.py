@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -511,7 +512,16 @@ def test_source_only_writes_source_artifacts_and_does_not_touch_existing_target_
     global_hashes = output_dir / "assignment_hashes.json"
     global_hashes.write_text('{"target_assignments":"reserved"}\n', encoding="utf-8")
 
-    create_publication_source_only_files(source, audit, output_dir, seed=20260723)
+    bundle = create_publication_source_only_files(source, audit, output_dir, seed=20260723)
+
+    metadata = json.loads((output_dir / "source_split_metadata.json").read_text(encoding="utf-8"))
+    for partition in ("source_train", "source_val"):
+        key = f"{partition}_manifest_sha256"
+        manifest_bytes = (output_dir / f"{partition}_manifest.csv").read_bytes()
+        expected = hashlib.sha256(manifest_bytes).hexdigest()
+        assert metadata[key] == expected
+        assert bundle["metadata"][key] == expected
+    assert "source_test_manifest_sha256" not in metadata
 
     assert target.read_text(encoding="utf-8") == "reserved-target-sentinel\n"
     assert global_hashes.read_text(encoding="utf-8") == '{"target_assignments":"reserved"}\n'

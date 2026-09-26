@@ -1248,6 +1248,8 @@ def create_publication_source_only_files(
         key = f"{partition}_manifest"
         paths[key] = output / f"{key}.csv"
         source.loc[source["partition"].eq(partition)].to_csv(paths[key], index=False)
+        if partition in ("source_train", "source_val"):
+            metadata[f"{key}_sha256"] = hashlib.sha256(paths[key].read_bytes()).hexdigest()
     paths["source_assignment_hashes"] = output / "source_assignment_hashes.json"
     paths["source_assignment_hashes"].write_text(
         json.dumps(hashes, indent=2, sort_keys=True) + "\n", encoding="utf-8"

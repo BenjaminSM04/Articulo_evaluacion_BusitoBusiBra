@@ -66,6 +66,7 @@ def _loader(
             frame,
             root,
             transform,
+            preprocessing=str(cfg.get("_control_preprocessing", "none")),
         ),
         batch_size=int(cfg.training.batch_size),
         shuffle=train,

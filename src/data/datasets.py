@@ -16,9 +16,22 @@ from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, train
 from torch.utils.data import DataLoader, Dataset
 
 from ..config import Config
+from ..training.control_preprocessing import crop_union_roi, percentile_normalize_rgb
 from ..utils.seed import seed_worker
 
 OPTIONAL_MANIFEST_COLUMNS = ("mask_path", "bbox")
+
+
+def roi_mask_paths(row: pd.Series) -> list[str]:
+    """Resolve la lista declarada de máscaras; el campo plural conserva uniones BUSI."""
+    plural = row.get("mask_paths", "")
+    raw = plural if not pd.isna(plural) and str(plural).strip() else row.get("mask_path", "")
+    if pd.isna(raw):
+        raw = ""
+    paths = [part.strip() for part in str(raw).split("|")]
+    if not paths or any(not part for part in paths):
+        raise ValueError(f"ROI sin máscaras para {row.get('image_path', '')}")
+    return paths
 
 
 def load_manifest(cfg: Config, key: str) -> pd.DataFrame:
@@ -36,10 +49,13 @@ def load_manifest(cfg: Config, key: str) -> pd.DataFrame:
 class UltrasoundDataset(Dataset):
     """Reads images listed in a manifest DataFrame and applies an albumentations transform."""
 
-    def __init__(self, df: pd.DataFrame, root: Path, transform=None):
+    def __init__(self, df: pd.DataFrame, root: Path, transform=None, *, preprocessing="none"):
         self.df = df.reset_index(drop=True)
         self.root = Path(root)
         self.transform = transform
+        if preprocessing not in {"none", "intensity", "roi"}:
+            raise ValueError(f"Control desconocido: {preprocessing}")
+        self.preprocessing = preprocessing
 
     def __len__(self) -> int:
         return len(self.df)
@@ -50,6 +66,19 @@ class UltrasoundDataset(Dataset):
         if img is None:
             raise FileNotFoundError(f"No se pudo leer {row['image_path']}")
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        if self.preprocessing == "intensity":
+            img = percentile_normalize_rgb(img)
+        elif self.preprocessing == "roi":
+            masks = []
+            for part in roi_mask_paths(row):
+                path = (self.root / part).resolve()
+                if not path.is_relative_to(self.root.resolve()):
+                    raise ValueError(f"Máscara ROI fuera del proyecto: {part}")
+                mask = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+                if mask is None:
+                    raise FileNotFoundError(f"No se pudo leer mascara ROI {path}")
+                masks.append(mask)
+            img = crop_union_roi(img, masks)
         if self.transform is not None:
             img = self.transform(image=img)["image"]
         else:

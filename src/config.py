@@ -64,14 +64,15 @@ class Config(DotDict):
     """Configuration object loaded from YAML with path-resolution helpers."""
 
     @classmethod
-    def load(cls, path: str | Path) -> "Config":
+    def load(cls, path: str | Path, *, create_dirs: bool = True) -> "Config":
         path = Path(path)
         with open(path, "r", encoding="utf-8") as fh:
             raw = yaml.safe_load(fh)
         cfg = cls(raw)
         cfg._root = project_root()
         cfg._config_path = str(path.resolve())
-        cfg._make_dirs()
+        if create_dirs:
+            cfg._make_dirs()
         return cfg
 
     # -- path helpers ---------------------------------------------------------
@@ -94,6 +95,6 @@ class Config(DotDict):
             yaml.safe_dump(plain, fh, sort_keys=False, allow_unicode=True)
 
 
-def load_config(path: str | Path) -> Config:
+def load_config(path: str | Path, *, create_dirs: bool = True) -> Config:
     """Load an explicitly selected protocol; never select a historical default."""
-    return Config.load(path)
+    return Config.load(path, create_dirs=create_dirs)

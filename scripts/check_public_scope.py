@@ -38,6 +38,7 @@ SCRIPT_FILES = {
     "scripts/12_finalize_publication_inference.py",
     "scripts/13_analyze_publication_results.py",
     "scripts/14_generate_publication_artifacts.py",
+    "scripts/15_stage_v3_private_development.py",
     "scripts/check_public_scope.py",
 }
 

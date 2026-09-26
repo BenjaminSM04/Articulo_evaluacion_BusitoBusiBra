@@ -18,7 +18,14 @@ El test BUS-BRA tuvo exposición exploratoria previa: los resultados futuros seg
 - `tests/`: pruebas sintéticas sin entrenamiento experimental ni acceso al test clínico.
 - `docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md`: condiciones para la ejecución local v3, piloto y pausa previa a inferencia final. `docs/PROTOCOL_PUBLICATION_V2.md` documenta el protocolo histórico, no una instrucción para reproducir cifras v2 como v3.
 
-Los datos originales deben obtenerse y conservarse fuera de Git. Para preparar una corrida futura se necesitarán, **en almacenamiento local privado**, las imágenes BUSI originales, la copia oficial Curated BUSI usada para verificar la selección, las imágenes BUS-BRA, los manifiestos fuente/destino y el archivo de partición histórica `results/metrics/bus_bra_adaptation_test_split.csv`. Este último es indispensable para conservar las cohortes BUS-BRA: un clon público, por sí solo, **no permite reconstruir la partición histórica ni reproducir las cifras**. Nunca se debe generar una partición nueva y presentarla como la histórica.
+Los datos originales deben obtenerse y conservarse fuera de Git. El respaldo
+privado conserva los datasets y la partición histórica BUS-BRA; un clon público
+por sí solo **no permite reconstruir esa partición ni reproducir las cifras**.
+Para preparar el entrenamiento v3, el utilitario del [protocolo local](docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md)
+copia al clon privado únicamente imágenes y máscaras de desarrollo,
+`source_train`, `source_val` y `target_adapt`, después de comprobar huellas y
+pertenencia. No copia ni abre imágenes de test o calibración. Nunca se debe
+generar una partición BUS-BRA nueva y presentarla como la histórica.
 
 No añadas a Git `data/raw/`, `data/processed/`, `results/`, `kaggle.json`, `.env`, material editorial ni otros archivos con identificadores privados. Revisa los archivos preparados para cada commit; `.gitignore` no es una revisión de confidencialidad.
 

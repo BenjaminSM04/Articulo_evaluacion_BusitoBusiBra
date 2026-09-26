@@ -1,7 +1,7 @@
 # Revisión OJEMB v3: cinco semillas en equipo local
 
-**Estado al 23 de septiembre de 2026:** protocolo aprobado por el autor; código,
-particiones y controles en preparación. No se debe interpretar la existencia de
+**Estado al 24 de septiembre de 2026:** protocolo aprobado por el autor; código,
+particiones y controles preparados para validación previa al piloto. No se debe interpretar la existencia de
 scripts o pruebas sintéticas como entrenamiento ejecutado. El manuscrito y los
 resultados v2 permanecen fuera de este repositorio. La aprobación del autor no
 equivale a una constancia ética institucional.
@@ -39,24 +39,61 @@ separado.
 
 ## Entradas privadas y procedencia
 
-El clon público no contiene imágenes, máscaras, manifiestos de pacientes,
+El repositorio público no contiene imágenes, máscaras, manifiestos de pacientes,
 particiones históricas, predicciones, checkpoints ni resultados. El respaldo
-`D:\busgen` no se modifica. Antes del piloto, copiar al clon local privado:
+`D:\busgen` no se modifica. La preparación local se hace mediante una lista
+cerrada, en dos fases:
 
-1. BUSI original, Curated BUSI v1 y BUS-BRA, con licencias y avisos cotejados.
-2. `data/processed/busi_curated_manifest.csv` y
-   `data/processed/bus_bra_manifest.csv`, cotejados con los mapeos públicos.
-3. `results/metrics/bus_bra_adaptation_test_split.csv` y solo las asignaciones
-   históricas necesarias de BUS-BRA. Preservar sus bytes y huellas. La
-   generación `--source-only` no debe leer ni sobrescribir las asignaciones
-   históricas del destino ni los archivos de test.
-4. SHA-256 de configuración, commit, código, CSV de auditoría, manifiestos,
-   imágenes y máscaras de desarrollo, particiones y entorno; Python, PyTorch,
-   CUDA, controlador y GPU. Cambios de bytes impiden `--resume` sin auditoría.
+1. Copiar solo `data/processed/busi_curated_manifest.csv` para generar en el
+   clon las asignaciones fuente v3. Su huella se comprueba contra el original
+   histórico. Esta fase no sigue las rutas de imágenes dentro del CSV.
+2. Copiar únicamente imágenes y máscaras mencionadas en `source_train`,
+   `source_val` y `target_adapt`, más el manifiesto y las cinco asignaciones
+   históricas de `target_adapt`. Las huellas fuente/objetivo y las dimensiones
+   de cada imagen/máscara se comprueban antes de la copia; se conserva el aviso
+   `LICENSE.txt` de BUS-BRA. No se copia el dataset completo, el manifiesto
+   BUS-BRA general ni `bus_bra_adaptation_test_split.csv`.
+3. Registrar SHA-256 de configuración, commit, código, CSV de auditoría,
+   manifiestos, imágenes y máscaras de desarrollo, asignaciones y entorno;
+   Python, PyTorch, CUDA, controlador y GPU. Cambios de bytes impiden
+   `--resume` sin auditoría.
+
+No se abren imágenes de `source_test`, `target_calibration` ni `target_test`.
+La generación `--source-only` escribe una asignación fuente de test, pero no
+lee sus píxeles. Las condiciones de uso y citas de BUSI/Curated BUSI y BUS-BRA
+deben verificarse antes de publicar artefactos derivados; ningún archivo
+clínico se publica en Git.
 
 Ni los datos privados ni sus índices por paciente se subirán a Git o a nube.
 `cross_validation.n_folds: 5` es heredado; las réplicas las controla
 `publication.seeds`.
+
+## Preparación local sin ejecutar modelos
+
+Desde la raíz del clon, con Python 3.11 y las dependencias instaladas:
+
+```powershell
+$origenV3 = 'D:\busgen'
+$clonV3 = 'D:\busgen-ojemb-code'
+.\.venv\Scripts\python.exe scripts/15_stage_v3_private_development.py --prepare-manifest --source-root $origenV3 --clone-root $clonV3
+.\.venv\Scripts\python.exe -m src.data.publication_splits --config config/config_publication_v3_5seed.yaml --source-only
+.\.venv\Scripts\python.exe scripts/15_stage_v3_private_development.py --stage-development --source-root $origenV3 --clone-root $clonV3
+.\.venv\Scripts\python.exe scripts/11_run_publication_experiments.py --config config/config_publication_v3_5seed.yaml --plan-only --pilot
+```
+
+Estas órdenes copian solo desarrollo y generan la asignación fuente; la última
+solo imprime el plan. Ninguna entrena o abre `source_test`, `target_calibration`
+ni `target_test`. Antes de autorizar el piloto se deben comprobar las huellas
+generadas, la copia de la licencia BUS-BRA, Git limpio, CUDA y espacio libre.
+El informe detallado de copia permanece ignorado por Git bajo `results/`.
+Los pesos ImageNet iniciales son los que carga `BaselineClassifier` mediante
+`timm` 1.0.27, no los de torchvision. Se precargaron sin entrenar desde
+`timm/resnet18.a1_in1k` (revisión HF `491b427b45c94c7fb0e78b5474cc919aff584bbf`,
+`model.safetensors` SHA-256 `80c49dee3da4822c009c5a7fe591e9223c5a2cfcf95a4067ca4dfb5a7b89c612`)
+y `timm/efficientnet_b0.ra_in1k` (revisión HF
+`1b5383e5f79cc0f7fc067e372f8f26a5fa73f26a`, SHA-256
+`d569899762ea9b1384ee07f4af64805cf8caa1c55f9253ebb1080dc40e87a2cd`).
+Las huellas deben coincidir al iniciar y reanudar el piloto.
 
 ## Piloto y límite de tiempo
 
@@ -79,6 +116,16 @@ estudio de cinco semillas. Se replanteará el alcance con el autor.
 `--resume` exige las mismas huellas. Nunca se debe borrar
 `TRAINING_ACTIVE.lock` sin verificar si el proceso sigue activo y documentar
 la interrupción. Los checkpoints v3 permanecerán fuera de Git.
+
+El comando de arranque, **reservado para una autorización posterior**, será:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/11_run_publication_experiments.py --config config/config_publication_v3_5seed.yaml --pilot --max-wall-hours 18
+```
+
+Si el gate del piloto queda aprobado, el resto de la matriz se retoma con
+`--resume --stage all --max-wall-hours 18`. No ejecutar estas órdenes como
+parte de la preparación actual.
 
 ## Compuerta ética y etapa posterior
 
