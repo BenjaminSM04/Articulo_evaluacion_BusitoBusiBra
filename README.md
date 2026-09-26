@@ -62,6 +62,6 @@ La CI usa Python 3.11, PyTorch CPU, Ruff sobre el código de revisión y estas p
 
 ## Antes del piloto y la corrida
 
-Se publicará y verificará primero el código. Después se cotejarán licencias, rutas y huellas SHA-256 de datos privados en el clon local. El piloto reutilizable incluye 20 checkpoints, y la corrida completa solo continuará si el tiempo consumido más la proyección integral cabe en 16 horas, con 2 horas de reserva y 18 horas como tope acumulado. La inferencia final no forma parte de esa autorización: exige constancia ética escrita y una decisión separada. Las instrucciones están en el [protocolo local](docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md).
+El plan inicial preveía un piloto de 20 trabajos y un límite acumulado de 18 horas. El autor autorizó posteriormente ejecutar la matriz completa con `--full-no-pilot`, sin esos dos gates. Se mantienen las huellas, los controles de recursos y `--resume`. La inferencia final no forma parte de esa autorización: exige constancia ética escrita y una decisión separada. Las instrucciones y el alcance exacto están en el [protocolo local](docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md).
 
 Este software es de investigación y **no es un dispositivo ni una recomendación clínica**. La revisión editorial, ética y final del artículo se gestiona fuera de este repositorio.

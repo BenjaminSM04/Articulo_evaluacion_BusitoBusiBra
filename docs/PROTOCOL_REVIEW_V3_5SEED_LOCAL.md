@@ -137,3 +137,20 @@ hasta recibirla. Abrir el test requerirá una decisión separada y un registro
 de acceso único. El artículo no se actualizará hasta contrastar artefactos
 v3 completos. La cobertura total del APC de OJEMB también sigue por confirmar;
 la aprobación académica del artículo no acredita esa cobertura.
+## Autorización operativa posterior (25 de septiembre de 2026)
+
+El autor autorizó ejecutar directamente las 160 variantes en la PC, sin piloto
+previo y sin el tope de 18 horas. Esta excepción solo modifica los gates de
+inicio y tiempo; no cambia la cohorte, particiones, modelos, semillas, controles
+ni análisis. Se mantienen las verificaciones de huellas y procedencia, los
+controles de espacio/VRAM, el guardado por trabajo y la reanudación. El comando
+autorizado es:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/11_run_publication_experiments.py --config config/config_publication_v3_5seed.yaml --full-no-pilot
+```
+
+En caso de interrupción, usar el mismo comando con `--resume`. Las instrucciones
+de piloto y límite de tiempo que siguen abajo documentan el plan anterior, pero
+no rigen esta corrida autorizada. `source_test`, `target_calibration` y
+`target_test` permanecen bloqueados hasta la determinación ética escrita.
