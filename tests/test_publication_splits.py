@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
+from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -14,6 +17,7 @@ from src.data.publication_splits import (
     add_stable_sample_ids,
     build_publication_splits,
     canonical_assignment_hash,
+    create_publication_source_only_files,
     create_publication_split_files,
     make_busbra_target_assignments,
     make_busi_group_disjoint_source_assignments,
@@ -419,3 +423,181 @@ def test_repeated_runner_calls_produce_identical_hashes(tmp_path):
         historical_target_split=historical.sample(frac=1, random_state=2),
     )
     assert first.hashes == second.hashes
+
+
+def _public_v3_source_manifest() -> pd.DataFrame:
+    mapping = pd.read_csv(
+        "resources/busi_curation/mapping_curated_BUSI.csv", sep=";"
+    )
+    mapping = mapping.loc[mapping["class"].isin({"benign", "malignant"})]
+    mapping = mapping.rename(columns={"class": "label", "id": "class_id"})
+    mapping["image_id"] = mapping["class_id"] + mapping["label"].map(
+        {"benign": 0, "malignant": 437}
+    )
+    mapping["label_idx"] = mapping["label"].map({"benign": 0, "malignant": 1})
+    mapping["dataset"] = "busi"
+    mapping["image_path"] = mapping.apply(
+        lambda row: f"data/processed/{row['label']}/{row['label']} ({row['class_id']}).png",
+        axis=1,
+    )
+    mapping["original_path"] = mapping["image_path"].str.replace(
+        "processed", "raw", regex=False
+    )
+    return mapping
+
+
+def test_v3_source_cohort_crosswalks_public_manifest_and_groups_only_reviewed_pairs(tmp_path):
+    source = _public_v3_source_manifest()
+    audit = pd.read_csv("resources/busi_curation/busi_pawlowska_sensitivity_audit.csv")
+    output = create_publication_source_only_files(
+        source,
+        audit,
+        tmp_path / "source",
+        seed=20260723,
+    )
+
+    manifest = output["source_manifest"]
+    assignments = output["source_assignments"]
+    assert len(manifest) == len(assignments) == 358
+    assert manifest.groupby("label").size().to_dict() == {"benign": 212, "malignant": 146}
+    assert output["metadata"]["source_exclusions"] == {
+        "duplicate_group_member": 9,
+        "objection_axilla": 14,
+        "objection_needle": 5,
+    }
+    assert manifest["curation_decision"].eq("keep").all()
+    assert manifest["pawlowska_group_id"].nunique() == 355
+    assert manifest.groupby("pawlowska_group_id")["partition"].nunique().max() == 1
+    assert manifest["partition"].value_counts().to_dict() == {
+        "source_train": 229,
+        "source_val": 57,
+        "source_test": 72,
+    }
+    explicit_groups = {
+        "benign": [(121, 102)],
+        "malignant": [(621, 639), (644, 576)],
+    }
+    for label, pairs in explicit_groups.items():
+        for left, right in pairs:
+            rows = manifest.loc[
+                manifest["label"].eq(label) & manifest["image_id"].isin([left, right])
+            ]
+            assert len(rows) == 2
+            assert rows["pawlowska_group_id"].nunique() == 1
+            assert rows["partition"].nunique() == 1
+
+    for left, right in [(376, 499), (380, 630)]:
+        left_group = manifest.loc[manifest["image_id"].eq(left), "pawlowska_group_id"].item()
+        right_group = manifest.loc[manifest["image_id"].eq(right), "pawlowska_group_id"].item()
+        assert left_group != right_group
+
+    class_id_crosswalk = create_publication_source_only_files(
+        source.drop(columns="image_id"),
+        audit,
+        tmp_path / "class_id_crosswalk",
+        seed=20260723,
+    )
+    assert class_id_crosswalk["hashes"]["source_assignments"] == output["hashes"][
+        "source_assignments"
+    ]
+
+
+def test_source_only_writes_source_artifacts_and_does_not_touch_existing_target_files(tmp_path):
+    source = _public_v3_source_manifest()
+    audit = pd.read_csv("resources/busi_curation/busi_pawlowska_sensitivity_audit.csv")
+    output_dir = tmp_path / "splits"
+    output_dir.mkdir()
+    target = output_dir / "target_test_manifest.csv"
+    target.write_text("reserved-target-sentinel\n", encoding="utf-8")
+    global_hashes = output_dir / "assignment_hashes.json"
+    global_hashes.write_text('{"target_assignments":"reserved"}\n', encoding="utf-8")
+
+    bundle = create_publication_source_only_files(source, audit, output_dir, seed=20260723)
+
+    metadata = json.loads((output_dir / "source_split_metadata.json").read_text(encoding="utf-8"))
+    for partition in ("source_train", "source_val"):
+        key = f"{partition}_manifest_sha256"
+        manifest_bytes = (output_dir / f"{partition}_manifest.csv").read_bytes()
+        expected = hashlib.sha256(manifest_bytes).hexdigest()
+        assert metadata[key] == expected
+        assert bundle["metadata"][key] == expected
+    assert "source_test_manifest_sha256" not in metadata
+
+    assert target.read_text(encoding="utf-8") == "reserved-target-sentinel\n"
+    assert global_hashes.read_text(encoding="utf-8") == '{"target_assignments":"reserved"}\n'
+    assert {path.name for path in output_dir.iterdir()} == {
+        "target_test_manifest.csv",
+        "assignment_hashes.json",
+        "source_assignments.csv",
+        "source_train_manifest.csv",
+        "source_val_manifest.csv",
+        "source_test_manifest.csv",
+        "source_assignment_hashes.json",
+        "source_split_metadata.json",
+    }
+
+
+def test_v3_source_crosswalk_rejects_missing_or_duplicated_public_audit_keys(tmp_path):
+    source = _public_v3_source_manifest()
+    audit = pd.read_csv("resources/busi_curation/busi_pawlowska_sensitivity_audit.csv")
+    with pytest.raises(ValueError, match="incompleto"):
+        create_publication_source_only_files(
+            source,
+            audit.loc[~(audit["label"].eq("benign") & audit["class_id"].eq(20))],
+            tmp_path / "missing",
+            seed=20260723,
+        )
+    with pytest.raises(ValueError, match="unique"):
+        create_publication_source_only_files(
+            source,
+            pd.concat([audit, audit.iloc[[0]]], ignore_index=True),
+            tmp_path / "duplicate",
+            seed=20260723,
+        )
+
+
+def test_source_only_cli_never_resolves_or_reads_target_inputs(tmp_path, monkeypatch):
+    from src.data import publication_splits
+
+    source = _public_v3_source_manifest()
+    audit = pd.read_csv("resources/busi_curation/busi_pawlowska_sensitivity_audit.csv")
+    source_path = tmp_path / "source.csv"
+    audit_path = tmp_path / "audit.csv"
+    source.to_csv(source_path, index=False)
+    audit.to_csv(audit_path, index=False)
+    output_dir = tmp_path / "output"
+    target_path = tmp_path / "target-must-not-be-read.csv"
+    target_path.write_text("target sentinel\n", encoding="utf-8")
+
+    class Publication(dict):
+        __getattr__ = dict.__getitem__
+
+    class Config:
+        publication = Publication(
+            source_group_audit=str(audit_path), split_seed=20260723
+        )
+        datasets = SimpleNamespace(
+            busi=SimpleNamespace(manifest=str(source_path)),
+            bus_bra=SimpleNamespace(manifest=str(target_path)),
+        )
+
+        def resolve(self, value):
+            assert Path(value) != target_path
+            return Path(value)
+
+        def path(self, _):
+            return output_dir
+
+    monkeypatch.setattr("src.config.load_config", lambda _: Config())
+    assert publication_splits.main(
+        [
+            "--config",
+            "unused-config.yaml",
+            "--source-only",
+            "--source-manifest",
+            str(source_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    ) == 0
+    assert target_path.read_text(encoding="utf-8") == "target sentinel\n"

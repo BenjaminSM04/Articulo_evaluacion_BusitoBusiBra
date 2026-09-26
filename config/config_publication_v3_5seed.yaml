@@ -1,8 +1,9 @@
-# Reanalisis descriptivo posrevision: cinco semillas nuevas bajo un mismo entorno.
+# Reanalisis descriptivo posrevision: cohorte fuente v3 de 358 imagenes y cinco semillas.
 # No reabre ni modifica results/publication_v2. Esta configuracion conserva los
-# hiperparametros v2, pero corrige grupos relacionados que cruzaban particiones
-# fuente; v2 y v3 no son una comparacion exclusiva de semillas. AdaBN,
-# normalizacion y ROI son controles adicionales aun pendientes.
+# hiperparametros v2. El modo --source-only aplica las exclusiones auditadas,
+# agrupa los pares revisados y escribe solo particiones/huellas de la fuente.
+# v2 y v3 no son una comparacion exclusiva de semillas. AdaBN, normalizacion y
+# ROI son controles del protocolo v3; su ejecucion aun esta pendiente.
 
 seed: 42
 device: cuda
@@ -84,7 +85,7 @@ evaluation:
   multiplicity: holm
 
 publication:
-  protocol_version: "3.0-review-5seed"
+  protocol_version: "3.1-source-cohort-review-5seed"
   source_group_audit: resources/busi_curation/busi_pawlowska_sensitivity_audit.csv
   split_seed: 20260723
   target_calibration_fraction_of_adapt_pool: 0.1666666667
@@ -92,6 +93,15 @@ publication:
   source_val_fraction_of_remainder: 0.20
   architectures: [resnet18, efficientnet_b0]
   seeds: [17, 42, 73, 101, 202]
+  cohort_version: reviewed_related_image_group_v3
+  controls:
+    intensity: {method: global_rgb_percentile, low: 1, high: 99}
+    roi: {method: union_masks, margin_fraction: 0.1}
+    adabn: {batch_size: 16, order_by: sample_id, parent_method: source_only_matched}
+  sensitivity:
+    dann_lambda: [0.5, 2.0]
+    align_weight: [0.5, 2.0]
+    mmd_sigma_scale: [0.5, 2.0]
   methods: [source_only_matched, dann, coral, mmd]
   finetune_fractions: [0.05, 0.10, 0.20]
   adaptation:

@@ -37,6 +37,17 @@ SOURCE_PARTITIONS = ("source_train", "source_val", "source_test")
 TARGET_PARTITIONS = ("target_adapt", "target_calibration", "target_test")
 DEFAULT_BUDGETS = (0.05, 0.10, 0.20)
 DEFAULT_BUSI_CLASS_COUNTS = {0: 222, 1: 164}
+V3_BUSI_CLASS_COUNTS = {0: 212, 1: 146}
+V3_BUSI_EXCLUSION_COUNTS = {
+    "duplicate_group_member": 9,
+    "objection_axilla": 14,
+    "objection_needle": 5,
+}
+V3_EXPLICIT_SOURCE_GROUPS = (
+    ("benign", 121, 102),
+    ("malignant", 621, 639),
+    ("malignant", 644, 576),
+)
 
 FrameLike = pd.DataFrame | str | Path
 
@@ -1050,6 +1061,212 @@ def persist_publication_splits(
     return paths
 
 
+def _source_input_sha256(value: FrameLike) -> str:
+    if isinstance(value, (str, Path)):
+        return hashlib.sha256(Path(value).read_bytes()).hexdigest()
+    payload = value.to_csv(index=False, lineterminator="\n").encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def create_publication_source_only_files(
+    source_manifest: FrameLike,
+    source_group_audit: FrameLike,
+    output_dir: str | Path,
+    *,
+    seed: int = 20260723,
+) -> dict[str, Any]:
+    """Build v3 source partitions from public source metadata only.
+
+    This entry point intentionally has no target or historical-split argument,
+    so it cannot read or persist target data. The source manifest is the local
+    386-row Curated BUSI manifest; the group/decision crosswalk is public.
+    """
+
+    source = normalise_manifest_path_columns(_read_frame(source_manifest))
+    audit = _read_frame(source_group_audit)
+    if len(source) != 386:
+        raise ValueError(f"El manifiesto BUSI fuente debe tener 386 filas; tiene {len(source)}.")
+    required_source = {"label", "label_idx"}
+    required_audit = {"label", "group_id", "decision", "decision_reason"}
+    if not required_source.issubset(source.columns):
+        missing = sorted(required_source - set(source))
+        raise ValueError(f"Manifiesto fuente incompleto: faltan {missing}.")
+    if not required_audit.issubset(audit.columns):
+        missing = sorted(required_audit - set(audit))
+        raise ValueError(f"Auditoría fuente incompleta: faltan {missing}.")
+
+    key_pairs = [
+        ("image_id", "image_id"),
+        ("class_id", "class_id"),
+    ]
+    available_keys = [
+        pair for pair in key_pairs if pair[0] in source.columns and pair[1] in audit.columns
+    ]
+    if not available_keys:
+        raise ValueError("El cruce fuente requiere image_id global o class_id.")
+
+    audit = audit.copy()
+    audit["label"] = audit["label"].astype(str).str.strip().str.lower()
+    audit["group_id"] = audit["group_id"].fillna("").astype(str).str.strip()
+    if audit["group_id"].eq("").any():
+        raise ValueError("La auditoría fuente contiene group_id vacío.")
+    for _, audit_key in available_keys:
+        audit[audit_key] = pd.to_numeric(audit[audit_key], errors="raise").astype(int)
+        if audit.duplicated(["label", audit_key]).any():
+            raise ValueError(f"Las claves de auditoría ({audit_key}, label) deben ser unique.")
+
+    source = source.copy()
+    source["label"] = source["label"].astype(str).str.strip().str.lower()
+    for source_key, _ in available_keys:
+        source[source_key] = pd.to_numeric(source[source_key], errors="raise").astype(int)
+        if source.duplicated(["label", source_key]).any():
+            raise ValueError(f"Las claves del manifiesto ({source_key}, label) deben ser unique.")
+
+    audit_by_key = {
+        audit_key: audit.set_index(["label", audit_key], drop=False)
+        for _, audit_key in available_keys
+    }
+
+    def _audit_identity(record: Mapping[str, Any]) -> tuple[str, int]:
+        identifier = record.get("image_id", record.get("class_id"))
+        return str(record["label"]), int(identifier)
+
+    matched_records: list[dict[str, Any] | None] = []
+    for row in source.to_dict("records"):
+        matches: list[dict[str, Any]] = []
+        for source_key, audit_key in available_keys:
+            key = (row["label"], int(row[source_key]))
+            index = audit_by_key[audit_key].index
+            if key in index:
+                selected = audit_by_key[audit_key].loc[key]
+                if isinstance(selected, pd.DataFrame):
+                    matches.append(selected.iloc[0].to_dict())
+                else:
+                    matches.append(selected.to_dict())
+        if matches and any(
+            _audit_identity(item) != _audit_identity(matches[0])
+            for item in matches[1:]
+        ):
+            raise ValueError(
+                "Cruce fuente ambiguo: image_id y class_id identifican filas distintas."
+            )
+        matched_records.append(matches[0] if matches else None)
+    if any(record is None for record in matched_records):
+        raise ValueError("Cruce de auditoría fuente incompleto para el manifiesto de 386 imágenes.")
+
+    crosswalk = pd.DataFrame(matched_records).reset_index(drop=True)
+    crosswalk_key = "image_id" if "image_id" in crosswalk else "class_id"
+    if crosswalk.duplicated(["label", crosswalk_key]).any():
+        raise ValueError(f"El cruce fuente no es unique por {crosswalk_key}.")
+    source = source.reset_index(drop=True)
+    source["curation_decision"] = crosswalk["decision"].astype(str)
+    source["curation_decision_reason"] = crosswalk["decision_reason"].astype(str)
+    source["pawlowska_group_id"] = crosswalk["group_id"].astype(str)
+    source["audit_image_id"] = (
+        pd.to_numeric(crosswalk["image_id"], errors="raise").astype(int)
+        if "image_id" in crosswalk
+        else source.get("image_id", source.get("class_id"))
+    )
+    source["image_id"] = source["audit_image_id"]
+
+    excluded = source.loc[~source["curation_decision"].eq("keep")]
+    observed_exclusions = excluded["curation_decision_reason"].value_counts().to_dict()
+    if observed_exclusions != V3_BUSI_EXCLUSION_COUNTS:
+        raise ValueError(
+            f"Exclusiones BUSI v3 inesperadas: {observed_exclusions}; "
+            f"se esperaban {V3_BUSI_EXCLUSION_COUNTS}."
+        )
+    source = source.loc[source["curation_decision"].eq("keep")].copy().reset_index(drop=True)
+    source["label_idx"] = pd.to_numeric(source["label_idx"], errors="raise").astype(int)
+    observed_classes = source["label_idx"].value_counts().sort_index().to_dict()
+    if observed_classes != V3_BUSI_CLASS_COUNTS:
+        raise ValueError(
+            f"Cohorte BUSI v3 inesperada: {observed_classes}; se esperaba {V3_BUSI_CLASS_COUNTS}."
+        )
+
+    # Apply only the three prespecified same-class pairs. Cross-class screening
+    # pairs remain distinct even if a future audit row uses a shared annotation.
+    explicit_ids: dict[tuple[str, int], str] = {}
+    for label, left, right in V3_EXPLICIT_SOURCE_GROUPS:
+        group_id = f"manual-{label}-{left}-{right}"
+        explicit_ids[(label, left)] = group_id
+        explicit_ids[(label, right)] = group_id
+    source["pawlowska_group_id"] = [
+        explicit_ids.get((str(row.label), int(row.audit_image_id)), row.pawlowska_group_id)
+        for row in source.itertuples(index=False)
+    ]
+
+    filtered_audit = source[["label", "audit_image_id", "pawlowska_group_id"]].rename(
+        columns={"audit_image_id": "image_id", "pawlowska_group_id": "group_id"}
+    )
+    source = source.drop(columns=["pawlowska_group_id"])
+    source, assignments = make_busi_group_disjoint_source_assignments(
+        source,
+        filtered_audit,
+        seed=seed,
+        test_fraction=0.20,
+        val_fraction_of_remainder=0.20,
+        expected_rows=358,
+        expected_class_counts=V3_BUSI_CLASS_COUNTS,
+    )
+    source["split_unit"] = "reviewed_related_image_group_v3"
+    assignments["split_unit"] = "reviewed_related_image_group_v3"
+    source["split_seed"] = int(seed)
+    assignments["split_seed"] = int(seed)
+    expected_counts = {"source_train": 229, "source_val": 57, "source_test": 72}
+    observed_counts = source["partition"].value_counts().sort_index().to_dict()
+    if observed_counts != expected_counts:
+        raise ValueError(f"Conteos de partición fuente v3 inesperados: {observed_counts}.")
+
+    hashes = {
+        "source_assignments": canonical_assignment_hash(
+            assignments, ["sample_id", "partition"]
+        ),
+        "source_manifest_input": _source_input_sha256(source_manifest),
+        "source_group_audit": _source_input_sha256(source_group_audit),
+    }
+    metadata: dict[str, Any] = {
+        "protocol": "publication_v3_source_only",
+        "split_seed": int(seed),
+        "source_rows_manifest": 386,
+        "source_rows_kept": 358,
+        "source_class_counts": {"benign": 212, "malignant": 146},
+        "source_exclusions": observed_exclusions,
+        "source_partition_counts": observed_counts,
+        "source_split_unit": "reviewed_related_image_group_v3",
+        "source_group_count": int(source["pawlowska_group_id"].nunique()),
+        "explicit_source_groups": [list(values) for values in V3_EXPLICIT_SOURCE_GROUPS],
+        "hashes": hashes,
+    }
+
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, Path] = {}
+    paths["source_assignments"] = output / "source_assignments.csv"
+    assignments.to_csv(paths["source_assignments"], index=False)
+    for partition in SOURCE_PARTITIONS:
+        key = f"{partition}_manifest"
+        paths[key] = output / f"{key}.csv"
+        source.loc[source["partition"].eq(partition)].to_csv(paths[key], index=False)
+        if partition in ("source_train", "source_val"):
+            metadata[f"{key}_sha256"] = hashlib.sha256(paths[key].read_bytes()).hexdigest()
+    paths["source_assignment_hashes"] = output / "source_assignment_hashes.json"
+    paths["source_assignment_hashes"].write_text(
+        json.dumps(hashes, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    paths["source_split_metadata"] = output / "source_split_metadata.json"
+    paths["source_split_metadata"].write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return {
+        "source_manifest": source,
+        "source_assignments": assignments,
+        "hashes": hashes,
+        "metadata": metadata,
+        "paths": paths,
+    }
+
+
 def create_publication_split_files(
     manifests: Mapping[str, FrameLike],
     config: Any,
@@ -1136,6 +1353,11 @@ def build_cli_parser() -> argparse.ArgumentParser:
     parser.add_argument("--historical-target-split", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--seeds", nargs="+", type=int)
+    parser.add_argument(
+        "--source-only",
+        action="store_true",
+        help="Genera únicamente particiones, manifiestos y huellas de la fuente BUSI v3.",
+    )
     return parser
 
 
@@ -1147,16 +1369,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_cli_parser().parse_args(argv)
     cfg = load_config(args.config)
     source_manifest = args.source_manifest or cfg.resolve(cfg.datasets.busi.manifest)
-    target_manifest = args.target_manifest or cfg.resolve(cfg.datasets.bus_bra.manifest)
-    historical_split = args.historical_target_split or (
-        cfg._root / "results" / "metrics" / "bus_bra_adaptation_test_split.csv"
-    )
     output_dir = args.output_dir or (cfg.path("results") / "splits")
     publication = cfg.publication
     source_group_audit = publication.get("source_group_audit")
     if source_group_audit is not None:
         source_group_audit = cfg.resolve(str(source_group_audit))
 
+    if args.source_only:
+        result = create_publication_source_only_files(
+            source_manifest,
+            source_group_audit,
+            output_dir,
+            seed=int(publication.split_seed),
+        )
+        print(f"[splits] artefactos fuente v3 escritos en {Path(output_dir).resolve()}")
+        print(json.dumps(result["metadata"], indent=2, sort_keys=True))
+        print("[splits] SHA-256")
+        for name, digest in sorted(result["hashes"].items()):
+            print(f"  {name}: {digest}")
+        return 0
+
+    target_manifest = args.target_manifest or cfg.resolve(cfg.datasets.bus_bra.manifest)
+    historical_split = args.historical_target_split or (
+        cfg._root / "results" / "metrics" / "bus_bra_adaptation_test_split.csv"
+    )
     bundle = create_publication_split_files(
         {"busi": source_manifest, "bus_bra": target_manifest},
         cfg,

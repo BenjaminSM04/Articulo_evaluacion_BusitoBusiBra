@@ -50,7 +50,12 @@ def infer_logits(
     frame = df.reset_index(drop=True).copy()
     workers = int(cfg.training.num_workers)
     loader = DataLoader(
-        UltrasoundDataset(frame, root, build_eval_transforms(cfg)),
+        UltrasoundDataset(
+            frame,
+            root,
+            build_eval_transforms(cfg),
+            preprocessing=str(cfg.get("_control_preprocessing", "none")),
+        ),
         batch_size=int(cfg.training.batch_size),
         shuffle=False,
         drop_last=False,
