@@ -559,11 +559,11 @@ def _validate_v3_target_assignments(
     return assignment_hash
 
 
-def _ethics_evidence_sha256(path: Path) -> str:
+def _ethics_basis_sha256(path: Path) -> str:
     if not path.is_file():
-        raise FileNotFoundError(f"Written ethics determination is missing: {path}")
+        raise FileNotFoundError(f"Written ethics basis is missing: {path}")
     if path.stat().st_size == 0:
-        raise ValueError("Written ethics determination is empty.")
+        raise ValueError("Written ethics basis is empty.")
     return sha256_file(path)
 
 
@@ -608,9 +608,12 @@ def main() -> None:
     )
     parser.add_argument("--resume", action="store_true")
     parser.add_argument(
-        "--ethics-determination",
+        "--ethics-basis",
         type=Path,
-        help="Private written institutional ethics determination required before v3 test access.",
+        help=(
+            "Written basis explaining why no additional review was conducted for the "
+            "secondary analysis of public de-identified data."
+        ),
     )
     args = parser.parse_args()
     if not args.unlock_test:
@@ -620,12 +623,12 @@ def main() -> None:
 
     requested_cfg = load_config(args.config, create_dirs=False)
     if str(requested_cfg.publication.protocol_version).startswith("3."):
-        if args.ethics_determination is None:
+        if args.ethics_basis is None:
             raise SystemExit(
-                "Refusing v3 test access without a written ethics determination. "
-                "Provide --ethics-determination after institutional review."
+                "Refusing v3 test access without a written ethics basis. "
+                "Provide --ethics-basis with the documented secondary-analysis rationale."
             )
-        args.ethics_evidence_sha256 = _ethics_evidence_sha256(args.ethics_determination)
+        args.ethics_basis_sha256 = _ethics_basis_sha256(args.ethics_basis)
     root = requested_cfg._root
     results = requested_cfg.path("results")
     _run_with_finalization_lock(
@@ -650,9 +653,9 @@ def _finalize_locked(
         )
     v3 = str(cfg.publication.protocol_version).startswith("3.")
     if v3:
-        current_ethics_sha256 = _ethics_evidence_sha256(args.ethics_determination)
-        if current_ethics_sha256 != args.ethics_evidence_sha256:
-            raise RuntimeError("Written ethics determination changed during finalization.")
+        current_ethics_sha256 = _ethics_basis_sha256(args.ethics_basis)
+        if current_ethics_sha256 != args.ethics_basis_sha256:
+            raise RuntimeError("Written ethics basis changed during finalization.")
     training_provenance = json.loads(training_provenance_path.read_text(encoding="utf-8"))
     effective_config_sha256 = sha256_file(effective_config_path)
     if training_provenance.get("effective_config_sha256") != effective_config_sha256:
@@ -729,7 +732,7 @@ def _finalize_locked(
         "n_experiments": int(len(index)),
     }
     if v3:
-        preliminary_fingerprint["ethics_determination_sha256"] = args.ethics_evidence_sha256
+        preliminary_fingerprint["ethics_basis_sha256"] = args.ethics_basis_sha256
     test_access_fingerprint_sha256 = _freeze_test_access(
         results,
         preliminary_fingerprint,
@@ -838,7 +841,7 @@ def _finalize_locked(
         "n_experiments": int(len(index)),
     }
     if v3:
-        fingerprint["ethics_determination_sha256"] = args.ethics_evidence_sha256
+        fingerprint["ethics_basis_sha256"] = args.ethics_basis_sha256
         fingerprint["inference_roi_masks_sha256"] = inference_roi_masks_sha256
         fingerprint["target_assignments_sha256"] = target_assignment_hash
     finalization_fingerprint_sha256 = _freeze_or_validate_finalization(

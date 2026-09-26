@@ -17,6 +17,8 @@ def test_public_scope_allows_only_the_selected_busi_tables() -> None:
         "scripts/11_run_publication_experiments.py",
         "scripts/15_stage_v3_private_development.py",
         "tests/test_public_scope.py",
+        "docs/ETHICS_BASIS_PUBLIC_DEIDENTIFIED_DATA.md",
+        "docs/FINALIZATION_READINESS_V3.md",
         "resources/busi_curation/mapping_curated_BUSI.csv",
         "resources/busi_curation/dataset_comment_list.csv",
         "resources/busi_curation/busi_pawlowska_sensitivity_audit.csv",
