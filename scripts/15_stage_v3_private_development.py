@@ -22,6 +22,9 @@ SPLITS = Path("results/publication_v3_5seed/splits")
 CURATED_MANIFEST = Path("data/processed/busi_curated_manifest.csv")
 BUS_BRA_LICENSE = Path("data/raw/BUS-BRA/BUSBRA/BUSBRA/LICENSE.txt")
 STAGING_REPORT = Path("results/publication_v3_5seed/logs/private_staging_sha256.json")
+FINAL_STAGING_REPORT = Path(
+    "results/publication_v3_5seed/logs/private_finalization_staging_sha256.json"
+)
 DEFAULT_SEEDS = (17, 42, 73, 101, 202)
 CURATED_MANIFEST_SHA256 = "74ce92d576695afaf04ee7c4df87beff1fb4931b98bd0eb91c1e5a72230cd9a8"
 TARGET_ADAPT_SHA256 = "9f87bed663301a8d32379e85380631a6aebd2fb56defe81762b9087d783b13a8"
@@ -32,6 +35,17 @@ FINETUNE_SHA256 = {
     73: "868020b5f6e69fa96909e904803b11c109bddc6462ae0e125f7821330875a324",
     101: "b60105c9c461ae4ee253062d7194a84259bbb0d58a8399c8228a432ece7bc46e",
     202: "957b51d34ebb43f52fdf20f85694265bd8653fb352844a8b31e804b5f49df49f",
+}
+SOURCE_TEST_SHA256 = "381fd8dbc940c9880c7b884b02c102ad340f3227c8b1ca93f75934d1fb7d7f92"
+FINALIZATION_INPUT_SHA256 = {
+    "target_assignments.csv": "1bb2f974e1a470d12908fe410c9ecd4ca854b17f3901379e88294033098b6372",
+    "assignment_hashes.json": "787ef047c3eec4121fcbec1b05e1d44f43b85399e12e12dd08ca6cff218ead02",
+    "target_calibration_manifest.csv": (
+        "4e300b59d2d961f44f2dd04bd697e1b22a4256028f40278d0cf71fd33bb23321"
+    ),
+    "target_test_manifest.csv": (
+        "794969a11784500cff23d2b6020e23bce1b09845cb48b71c3c0ba304b4e1f542"
+    ),
 }
 BUDGETS = (0.05, 0.10, 0.20)
 
@@ -319,19 +333,127 @@ def stage_development(
     }
 
 
+def stage_finalization(source_root: Path, clone_root: Path) -> dict[str, object]:
+    """Copia insumos finales congelados sin iniciar inferencia ni acceso lógico al test."""
+    source, clone = _roots(source_root, clone_root)
+    split_root = SPLITS
+    source_test_path = _contained(clone, split_root / "source_test_manifest.csv", exists=True)
+    _require_sha256(source_test_path, SOURCE_TEST_SHA256)
+    source_test = _read_manifest(source_test_path, partition="source_test")
+    adapt = _read_manifest(
+        _contained(clone, split_root / "target_adapt_manifest.csv", exists=True),
+        partition="target_adapt",
+    )
+
+    final_relatives = {
+        name: split_root / name for name in FINALIZATION_INPUT_SHA256
+    }
+    for name, relative in final_relatives.items():
+        _require_sha256(
+            _contained(source, relative, exists=True), FINALIZATION_INPUT_SHA256[name]
+        )
+    calibration = _read_manifest(
+        _contained(source, final_relatives["target_calibration_manifest.csv"], exists=True),
+        partition="target_calibration",
+    )
+    target_test = _read_manifest(
+        _contained(source, final_relatives["target_test_manifest.csv"], exists=True),
+        partition="target_test",
+    )
+    for rows, name, require_patient in (
+        (source_test, "source_test", False),
+        (calibration, "target_calibration", True),
+        (target_test, "target_test", True),
+    ):
+        required = {"label", "label_idx", "image_path"}
+        if require_patient:
+            required.add("patient_id")
+        if any(not all(str(row.get(key, "")).strip() for key in required) for row in rows):
+            raise ValueError(f"{name} carece de campos obligatorios: {sorted(required)}")
+
+    target_sets = {
+        name: {row["patient_id"] for row in rows}
+        for name, rows in (
+            ("adapt", adapt),
+            ("calibration", calibration),
+            ("test", target_test),
+        )
+    }
+    if any(
+        target_sets[left] & target_sets[right]
+        for left, right in (("adapt", "calibration"), ("adapt", "test"), ("calibration", "test"))
+    ):
+        raise ValueError("Las particiones objetivo comparten patient_id")
+
+    pixels: set[Path] = set()
+    for rows, source_rows in ((source_test, True), (calibration, False), (target_test, False)):
+        for row in rows:
+            pixels.add(_relative_path(row["image_path"]))
+            for mask in _mask_paths(row, source=source_rows):
+                pixels.add(_relative_path(mask))
+    files = sorted(
+        pixels | set(final_relatives.values()), key=lambda item: item.as_posix()
+    )
+    hashes: dict[str, str] = {}
+    for relative in files:
+        origin = _contained(source, relative, exists=True)
+        destination = _contained(clone, relative, exists=False)
+        digest = _sha256(origin)
+        if destination.exists() and (not destination.is_file() or _sha256(destination) != digest):
+            raise ValueError(f"SHA-256 inconsistente en destino existente: {relative}")
+        hashes[relative.as_posix()] = digest
+    for rows, source_rows in ((source_test, True), (calibration, False), (target_test, False)):
+        _validate_pixels(source, rows, source=source_rows)
+    copied = sum(
+        _checked_copy(source, clone, relative, expected_hash=hashes[relative.as_posix()])
+        for relative in files
+    )
+    detailed_report = {
+        "copied_files": copied,
+        "verified_files": len(files),
+        "source_test_images": len(source_test),
+        "target_calibration_images": len(calibration),
+        "target_calibration_patients": len(target_sets["calibration"]),
+        "target_test_images": len(target_test),
+        "target_test_patients": len(target_sets["test"]),
+        "sha256": hashes,
+        "test_access_started": False,
+    }
+    report_path = _contained(clone, FINAL_STAGING_REPORT, exists=False)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (json.dumps(detailed_report, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    fd, temporary = tempfile.mkstemp(prefix=".private-finalization-", dir=report_path.parent)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(encoded)
+        os.replace(temporary, report_path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    return {
+        "copied_files": copied,
+        "verified_files": len(files),
+        "report_path": str(FINAL_STAGING_REPORT.as_posix()),
+        "report_sha256": _sha256(report_path),
+        "test_access_started": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument("--prepare-manifest", action="store_true")
     modes.add_argument("--stage-development", action="store_true")
+    modes.add_argument("--stage-finalization", action="store_true")
     parser.add_argument("--source-root", required=True, type=Path)
     parser.add_argument("--clone-root", required=True, type=Path)
     parser.add_argument("--seeds", nargs="+", type=int, default=list(DEFAULT_SEEDS))
     args = parser.parse_args()
     if args.prepare_manifest:
         result = prepare_manifest(args.source_root, args.clone_root)
-    else:
+    elif args.stage_development:
         result = stage_development(args.source_root, args.clone_root, seeds=tuple(args.seeds))
+    else:
+        result = stage_finalization(args.source_root, args.clone_root)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

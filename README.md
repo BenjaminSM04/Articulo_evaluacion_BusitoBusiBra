@@ -17,6 +17,7 @@ El test BUS-BRA tuvo exposición exploratoria previa: los resultados futuros seg
 - `resources/busi_curation/`: mapeos y auditoría de imágenes BUSI de origen público; [alcance y procedencia](resources/busi_curation/README.md).
 - `tests/`: pruebas sintéticas sin entrenamiento experimental ni acceso al test clínico.
 - `docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md`: condiciones para la ejecución local v3, piloto y pausa previa a inferencia final. `docs/PROTOCOL_PUBLICATION_V2.md` documenta el protocolo histórico, no una instrucción para reproducir cifras v2 como v3.
+- `docs/FINALIZATION_READINESS_V3.md`: estado del entrenamiento, base ética para datos públicos desidentificados, supuesto de cobertura APC y preparación de la evaluación final.
 
 Los datos originales deben obtenerse y conservarse fuera de Git. El respaldo
 privado conserva los datasets y la partición histórica BUS-BRA; un clon público

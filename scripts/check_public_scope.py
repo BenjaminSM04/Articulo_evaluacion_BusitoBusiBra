@@ -20,6 +20,8 @@ CONFIG_FILES = {
     "config/config_publication_v3_5seed.yaml",
 }
 DOC_FILES = {
+    "docs/ETHICS_BASIS_PUBLIC_DEIDENTIFIED_DATA.md",
+    "docs/FINALIZATION_READINESS_V3.md",
     "docs/PROTOCOL_PUBLICATION_V2.md",
     "docs/PROTOCOL_REVIEW_V3_5SEED_LOCAL.md",
     "docs/PREPARACION_V3.md",

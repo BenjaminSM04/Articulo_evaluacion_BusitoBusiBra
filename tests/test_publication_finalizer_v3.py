@@ -205,7 +205,7 @@ def test_v3_lineage_rejects_parent_digest_mismatch(tmp_path):
         finalizer._verify_v3_checkpoint_lineage(index, common, tmp_path)
 
 
-def test_v3_requires_written_ethics_determination_before_test_marker(tmp_path, monkeypatch):
+def test_v3_requires_written_ethics_basis_before_test_marker(tmp_path, monkeypatch):
     finalizer = _finalizer()
     cfg = _cfg(tmp_path)
     monkeypatch.setattr(finalizer, "load_config", lambda *args, **kwargs: cfg)
@@ -220,14 +220,17 @@ def test_v3_requires_written_ethics_determination_before_test_marker(tmp_path, m
     assert not (cfg.path("results") / "logs" / "TRAINING_ACTIVE.lock").exists()
 
 
-def test_v3_ethics_evidence_is_hashed_and_empty_file_is_rejected(tmp_path):
+def test_v3_ethics_basis_is_hashed_and_empty_file_is_rejected(tmp_path):
     finalizer = _finalizer()
-    evidence = tmp_path / "written-determination.txt"
-    evidence.write_text("Institutional determination for synthetic test", encoding="utf-8")
-    assert finalizer._ethics_evidence_sha256(evidence) == sha256_file(evidence)
+    evidence = tmp_path / "ethics-basis.md"
+    evidence.write_text(
+        "Secondary analysis of public, de-identified BUSI and BUS-BRA data.",
+        encoding="utf-8",
+    )
+    assert finalizer._ethics_basis_sha256(evidence) == sha256_file(evidence)
     evidence.write_text("", encoding="utf-8")
     with pytest.raises(ValueError, match="empty|vacío|vacio"):
-        finalizer._ethics_evidence_sha256(evidence)
+        finalizer._ethics_basis_sha256(evidence)
 
 
 def test_v3_uses_separate_source_split_hash_registry(tmp_path):

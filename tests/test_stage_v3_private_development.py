@@ -181,6 +181,72 @@ def _refresh_source_metadata(clone: Path) -> None:
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
 
 
+def _final_fixture(source: Path, clone: Path) -> None:
+    for rel in (
+        "data/raw/busi/held-out.png",
+        "data/raw/busi/held-out-mask.png",
+        "data/raw/bra/calibration.png",
+        "data/raw/bra/calibration-mask.png",
+        "data/raw/bra/test.png",
+        "data/raw/bra/test-mask.png",
+    ):
+        _png(source / rel)
+    splits = clone / "results/publication_v3_5seed/splits"
+    _csv(
+        splits / "source_test_manifest.csv",
+        [{
+            "sample_id": "s3", "label": "benign", "label_idx": "0",
+            "image_path": "data/raw/busi/held-out.png",
+            "mask_path": "data/raw/busi/held-out-mask.png", "partition": "source_test",
+        }],
+    )
+    historical = source / "results/publication_v3_5seed/splits"
+    _csv(
+        historical / "target_calibration_manifest.csv",
+        [{
+            "sample_id": "t2", "patient_id": "p2", "label": "benign", "label_idx": "0",
+            "image_path": "data/raw/bra/calibration.png",
+            "mask_path": "data/raw/bra/calibration-mask.png",
+            "partition": "target_calibration",
+        }],
+    )
+    _csv(
+        historical / "target_test_manifest.csv",
+        [{
+            "sample_id": "t3", "patient_id": "p3", "label": "malignant", "label_idx": "1",
+            "image_path": "data/raw/bra/test.png", "mask_path": "data/raw/bra/test-mask.png",
+            "partition": "target_test",
+        }],
+    )
+    _csv(
+        historical / "target_assignments.csv",
+        [
+            {"sample_id": "t1", "patient_id": "p1", "partition": "target_adapt"},
+            {"sample_id": "t2", "patient_id": "p2", "partition": "target_calibration"},
+            {"sample_id": "t3", "patient_id": "p3", "partition": "target_test"},
+        ],
+    )
+    (historical / "assignment_hashes.json").write_text(
+        '{"target_assignments": "synthetic"}\n', encoding="utf-8"
+    )
+
+
+def _trust_final_fixture(stage, source: Path, clone: Path) -> None:
+    historical = source / "results/publication_v3_5seed/splits"
+    stage.FINALIZATION_INPUT_SHA256 = {
+        name: hashlib.sha256((historical / name).read_bytes()).hexdigest()
+        for name in (
+            "target_assignments.csv",
+            "assignment_hashes.json",
+            "target_calibration_manifest.csv",
+            "target_test_manifest.csv",
+        )
+    }
+    stage.SOURCE_TEST_SHA256 = hashlib.sha256(
+        (clone / "results/publication_v3_5seed/splits/source_test_manifest.csv").read_bytes()
+    ).hexdigest()
+
+
 def test_prepare_manifest_only_copies_manifest(tmp_path: Path) -> None:
     source, clone = _fixture(tmp_path)
     stage = _module()
@@ -192,6 +258,52 @@ def test_prepare_manifest_only_copies_manifest(tmp_path: Path) -> None:
     ).read_bytes()
     assert not (clone / "data/raw/busi/held-out.png").exists()
     assert not (clone / "data/raw/busi/train.png").exists()
+
+
+def test_stage_finalization_copies_locked_inputs_without_starting_test_access(
+    tmp_path: Path,
+) -> None:
+    source, clone = _fixture(tmp_path)
+    stage = _module()
+    _trust_fixture(stage, source)
+    _stage(stage, source, clone)
+    _final_fixture(source, clone)
+    _trust_final_fixture(stage, source, clone)
+
+    report = stage.stage_finalization(source, clone)
+
+    for rel in (
+        "data/raw/busi/held-out.png",
+        "data/raw/busi/held-out-mask.png",
+        "data/raw/bra/calibration.png",
+        "data/raw/bra/calibration-mask.png",
+        "data/raw/bra/test.png",
+        "data/raw/bra/test-mask.png",
+        "results/publication_v3_5seed/splits/target_assignments.csv",
+        "results/publication_v3_5seed/splits/assignment_hashes.json",
+        "results/publication_v3_5seed/splits/target_calibration_manifest.csv",
+        "results/publication_v3_5seed/splits/target_test_manifest.csv",
+    ):
+        assert (clone / rel).read_bytes() == (source / rel).read_bytes()
+    assert report["verified_files"] == 10
+    assert not (clone / "results/publication_v3_5seed/TEST_ACCESS_STARTED.json").exists()
+    assert not (clone / "results/publication_v3_5seed/predictions").exists()
+
+
+def test_stage_finalization_rejects_changed_locked_manifest_before_copy(tmp_path: Path) -> None:
+    source, clone = _fixture(tmp_path)
+    stage = _module()
+    _trust_fixture(stage, source)
+    _stage(stage, source, clone)
+    _final_fixture(source, clone)
+    _trust_final_fixture(stage, source, clone)
+    stage.FINALIZATION_INPUT_SHA256["target_test_manifest.csv"] = "0" * 64
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        stage.stage_finalization(source, clone)
+
+    assert not (clone / "data/raw/bra/test.png").exists()
+    assert not (clone / "results/publication_v3_5seed/TEST_ACCESS_STARTED.json").exists()
 
 
 def test_prepare_rejects_unapproved_curated_manifest(tmp_path: Path) -> None:
