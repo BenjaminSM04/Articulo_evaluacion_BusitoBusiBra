@@ -44,6 +44,7 @@ FINALIZATION_CODE_FILES = (
     "src/evaluation/metrics.py",
     "src/evaluation/publication_protocol.py",
     "src/evaluation/publication_statistics.py",
+    "src/evaluation/publication_statistics_v3.py",
     "src/models/architectures.py",
     "src/training/publication_protocol.py",
     "src/training/control_preprocessing.py",
@@ -396,8 +397,7 @@ def _verify_checkpoint_lineage(
             assignment = splits / f"finetune_assignments_seed{int(row.seed)}.csv"
             if provenance.get("budget_assignment_sha256") != sha256_file(assignment):
                 raise ValueError(
-                    f"Fine-tuning assignment changed for {row.arch}/{row.method}/"
-                    f"seed={row.seed}."
+                    f"Fine-tuning assignment changed for {row.arch}/{row.method}/seed={row.seed}."
                 )
 
 
@@ -409,9 +409,19 @@ def _field(value: Any) -> str:
 def _validate_v3_index(index: pd.DataFrame, cfg: Config, root: Path) -> dict[str, Any]:
     """Require exactly the frozen 160 v3 identities and their immutable descriptors."""
     required = {
-        "experiment_id", "family", "stage", "arch", "seed", "method",
-        "preprocessing", "hyperparameter", "hyperparameter_value", "parent_id",
-        "parent_checkpoint_sha256", "variant_config_sha256", "checkpoint_path",
+        "experiment_id",
+        "family",
+        "stage",
+        "arch",
+        "seed",
+        "method",
+        "preprocessing",
+        "hyperparameter",
+        "hyperparameter_value",
+        "parent_id",
+        "parent_checkpoint_sha256",
+        "variant_config_sha256",
+        "checkpoint_path",
         "checkpoint_sha256",
     }
     missing_columns = required - set(index.columns)
@@ -431,7 +441,13 @@ def _validate_v3_index(index: pd.DataFrame, cfg: Config, root: Path) -> dict[str
     for row in index.itertuples(index=False):
         job = expected[str(row.experiment_id)]
         for key in (
-            "family", "stage", "arch", "method", "preprocessing", "hyperparameter", "parent_id"
+            "family",
+            "stage",
+            "arch",
+            "method",
+            "preprocessing",
+            "hyperparameter",
+            "parent_id",
         ):
             if _field(getattr(row, key)) != str(getattr(job, key)):
                 raise ValueError(f"v3 index descriptor mismatch for {job.experiment_id}: {key}")
@@ -485,8 +501,13 @@ def _verify_v3_checkpoint_lineage(
             if provenance.get(key) != training_provenance.get(key):
                 raise ValueError(f"v3 provenance mismatch for {row.experiment_id}: {key}")
         for key in (
-            "experiment_id", "family", "preprocessing", "hyperparameter", "parent_id",
-            "parent_checkpoint_sha256", "variant_config_sha256",
+            "experiment_id",
+            "family",
+            "preprocessing",
+            "hyperparameter",
+            "parent_id",
+            "parent_checkpoint_sha256",
+            "variant_config_sha256",
         ):
             if _field(provenance.get(key)) != _field(getattr(row, key)):
                 raise ValueError(f"v3 variant provenance mismatch for {row.experiment_id}: {key}")
@@ -538,9 +559,7 @@ def _validate_v3_target_assignments(
     columns = ["sample_id", "patient_id", "partition"]
     assignments = pd.read_csv(splits / "target_assignments.csv", dtype=str).fillna("")
     registry = json.loads((splits / "assignment_hashes.json").read_text(encoding="utf-8"))
-    combined = pd.concat(
-        (target_adapt, target_calibration, target_test), ignore_index=True
-    )
+    combined = pd.concat((target_adapt, target_calibration, target_test), ignore_index=True)
     if assignments["sample_id"].duplicated().any() or combined["sample_id"].duplicated().any():
         raise ValueError("Duplicate sample in historical target assignment")
     for frame, partition in (
@@ -778,21 +797,16 @@ def _finalize_locked(
 
     manifest_hashes = {key: sha256_file(path) for key, path in manifest_paths.items()}
     target_assignment_hash = (
-        _validate_v3_target_assignments(
-            splits, target_adapt, target_calibration, target_test
-        )
-        if v3 else None
+        _validate_v3_target_assignments(splits, target_adapt, target_calibration, target_test)
+        if v3
+        else None
     )
     assignment_path, metadata_path = _split_provenance_files(
         str(cfg.publication.protocol_version), splits
     )
-    if training_provenance.get("split_assignment_hashes_sha256") != sha256_file(
-        assignment_path
-    ):
+    if training_provenance.get("split_assignment_hashes_sha256") != sha256_file(assignment_path):
         raise ValueError("Split assignment hash registry changed after training.")
-    if training_provenance.get("split_metadata_sha256") != sha256_file(
-        metadata_path
-    ):
+    if training_provenance.get("split_metadata_sha256") != sha256_file(metadata_path):
         raise ValueError("Split metadata changed after training.")
     for key in ("source_train_sha256", "source_val_sha256", "target_adapt_sha256"):
         manifest_key = key.replace("_sha256", "_manifest_sha256")
@@ -823,7 +837,8 @@ def _finalize_locked(
     )
     inference_roi_masks_sha256 = (
         _roi_mask_sha256(root, (source_val, source_test, target_calibration, target_test))
-        if v3 else None
+        if v3
+        else None
     )
     fingerprint = {
         "config_sha256": sha256_file(args.config),
@@ -975,7 +990,8 @@ def _finalize_locked(
                     "preprocessing": str(row.preprocessing),
                     "hyperparameter": _field(row.hyperparameter),
                     "hyperparameter_value": (
-                        None if not _field(row.hyperparameter_value)
+                        None
+                        if not _field(row.hyperparameter_value)
                         else float(row.hyperparameter_value)
                     ),
                     "parent_id": _field(row.parent_id),
@@ -1082,9 +1098,11 @@ def _finalize_locked(
         or ending_image_csv_sha256 != inference_image_csv_sha256
     ):
         raise RuntimeError("At least one inference image changed during final evaluation.")
-    if v3 and _roi_mask_sha256(
-        root, (source_val, source_test, target_calibration, target_test)
-    ) != inference_roi_masks_sha256:
+    if (
+        v3
+        and _roi_mask_sha256(root, (source_val, source_test, target_calibration, target_test))
+        != inference_roi_masks_sha256
+    ):
         raise RuntimeError("At least one ROI mask changed during final evaluation.")
 
     artifact_paths = sorted(prediction_root.rglob("*.csv")) + sorted(metrics_root.rglob("*.json"))

@@ -8,12 +8,17 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.config import load_config  # noqa: E402
 from src.evaluation.publication_statistics import (  # noqa: E402
     analyze_publication_predictions,
     validate_locked_artifacts,
+)
+from src.evaluation.publication_statistics_v3 import (
+    analyze_v3_publication_predictions,  # noqa: E402
 )
 
 
@@ -101,14 +106,15 @@ def main() -> None:
     architectures = [str(value) for value in cfg.publication.architectures]
     seeds = [int(value) for value in cfg.publication.seeds]
     methods = _frozen_methods(cfg)
-    expected_experiments = len(architectures) * len(seeds) * len(methods)
+    v3 = str(cfg.publication.protocol_version).startswith("3.")
+    expected_experiments = 160 if v3 else len(architectures) * len(seeds) * len(methods)
     if int(lock.get("n_experiments", -1)) != expected_experiments:
         raise ValueError(
             "Final inference lock does not match the configured experiment matrix: "
             f"expected {expected_experiments}, observed {lock.get('n_experiments')}."
         )
-    if len(architectures) * 3 != 6:
-        raise ValueError("Protocol v2 requires two architectures and six UDA comparisons.")
+    if len(architectures) * 3 != 6 or (v3 and len(seeds) != 5):
+        raise ValueError("The frozen protocol requires two architectures and its five v3 seeds.")
     if int(cfg.evaluation.n_bootstrap) != 5000:
         raise ValueError("The confirmatory protocol requires exactly 5000 bootstrap replicates.")
     if not abs(float(cfg.evaluation.ci_level) - 0.95) < 1e-12:
@@ -116,18 +122,29 @@ def main() -> None:
     if int(lock.get("target_test_patients", -1)) != 426:
         raise ValueError("The locked target test must contain exactly 426 patients.")
 
-    output_paths = analyze_publication_predictions(
-        results / "predictions",
-        results / "analysis",
+    common = dict(
         architectures=architectures,
-        methods=methods,
         seeds=seeds,
         n_bootstrap=int(cfg.evaluation.n_bootstrap),
         confidence_level=float(cfg.evaluation.ci_level),
         bootstrap_seed=int(cfg.publication.split_seed),
-        require_six_uda_comparisons=True,
         expected_finalization_fingerprint=finalization_fingerprint,
     )
+    if v3:
+        output_paths = analyze_v3_publication_predictions(
+            results / "predictions",
+            results / "analysis",
+            checkpoint_index=pd.read_csv(results / "checkpoints" / "checkpoint_index.csv"),
+            **common,
+        )
+    else:
+        output_paths = analyze_publication_predictions(
+            results / "predictions",
+            results / "analysis",
+            methods=methods,
+            require_six_uda_comparisons=True,
+            **common,
+        )
     print("[done] confirmatory analysis written:")
     for name, path in output_paths.items():
         print(f"  {name}: {path}")

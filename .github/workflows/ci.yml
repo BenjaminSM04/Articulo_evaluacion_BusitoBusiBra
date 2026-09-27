@@ -29,6 +29,7 @@ jobs:
           python -m ruff check --select E4,E7,E9,F \
             src/busi_curation.py src/data/datasets.py src/data/publication_splits.py \
             src/evaluation/publication_protocol.py src/evaluation/publication_statistics.py \
+            src/evaluation/publication_statistics_v3.py \
             src/training/adabn.py src/training/control_preprocessing.py \
             src/training/experiment_matrix.py src/training/publication_protocol.py \
             scripts/10_curate_busi.py scripts/11_run_publication_experiments.py \
