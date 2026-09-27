@@ -31,14 +31,14 @@ plt.rcParams.update(
 )
 
 METHOD_LABELS = {
-    "source_direct": "Fuente directa",
-    "source_only_matched": "Control fuente emparejado",
+    "source_direct": "Direct source",
+    "source_only_matched": "Matched source control",
     "dann": "DANN",
     "coral": "CORAL",
     "mmd": "MMD",
-    "finetune_5pct": "Ajuste fino 5 %",
-    "finetune_10pct": "Ajuste fino 10 %",
-    "finetune_20pct": "Ajuste fino 20 %",
+    "finetune_5pct": "Fine-tuning 5%",
+    "finetune_10pct": "Fine-tuning 10%",
+    "finetune_20pct": "Fine-tuning 20%",
 }
 ARCH_LABELS = {
     "resnet18": "ResNet-18",
@@ -94,6 +94,23 @@ def _load_locked_inputs(results: Path) -> tuple[dict, dict[str, pd.DataFrame]]:
         "source_ensemble_metrics",
     )
     tables = {name: pd.read_csv(_require(analysis / f"{name}.csv")) for name in names}
+    if int(lock.get("n_experiments", -1)) == 160:
+        for name in (
+            "all_variant_metrics",
+            "v3_method_families",
+            "v3_hyperparameter_sensitivity",
+            "v3_threshold_sensitivity",
+        ):
+            tables[name] = pd.read_csv(_require(analysis / f"{name}.csv"))
+        if len(tables["all_variant_metrics"]) != 160:
+            raise ValueError("Expected exactly 160 v3 variant-metric rows.")
+        families = tables["v3_method_families"]["family"].value_counts().to_dict()
+        if families != {"primary": 6, "secondary": 6}:
+            raise ValueError(f"Expected two separate six-comparison families: {families}")
+        if len(tables["v3_hyperparameter_sensitivity"]) != 45:
+            raise ValueError("Expected 45 hyperparameter-sensitivity rows.")
+        if len(tables["v3_threshold_sensitivity"]) != 60:
+            raise ValueError("Expected 60 threshold-sensitivity rows.")
 
     observed_architectures = set(tables["ensemble_metrics"]["arch"].astype(str))
     if observed_architectures != set(ARCH_LABELS):
@@ -156,7 +173,72 @@ def _box(
     )
 
 
-def figure_cohort_flow(output_dir: Path) -> list[Path]:
+def _cohort_flow_labels(results: Path, cohorts: pd.DataFrame) -> dict[str, str]:
+    """Build labels from frozen manifests and reviewed-source metadata."""
+    by_cohort = cohorts.set_index("cohort")
+
+    def row(name: str) -> pd.Series:
+        if name not in by_cohort.index:
+            raise ValueError(f"Missing frozen cohort: {name}")
+        return by_cohort.loc[name]
+
+    source = [
+        row(name) for name in ("Source training", "Source validation", "Source internal test")
+    ]
+    target = [
+        row(name)
+        for name in ("Target adaptation", "Target calibration", "Historical external test")
+    ]
+    source_total = sum(int(item["images"]) for item in source)
+    source_benign = sum(int(item["benign_images"]) for item in source)
+    source_malignant = sum(int(item["malignant_images"]) for item in source)
+    metadata_path = results / "splits" / "source_split_metadata.json"
+    if metadata_path.is_file():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        eligible = int(metadata["source_rows_manifest"])
+        retained = int(metadata["source_rows_kept"])
+        excluded = sum(int(value) for value in metadata["source_exclusions"].values())
+        if retained != source_total or eligible - retained != excluded:
+            raise ValueError("Source cohort counts disagree with frozen review metadata.")
+        review_note = f"; {excluded} excluded"
+    else:
+        eligible = source_total
+        review_note = ""
+
+    def split_label(title: str, item: pd.Series, *, patient_count: bool = False) -> str:
+        count = f" · {int(item['patients'])} patients" if patient_count else ""
+        return (
+            f"{title}\n{int(item['images'])} images{count}\n"
+            f"B/M: {int(item['benign_images'])}/{int(item['malignant_images'])}"
+        )
+
+    adapt, calibration, test = target
+    development_images = int(adapt["images"]) + int(calibration["images"])
+    development_patients = int(adapt["patients"]) + int(calibration["patients"])
+    return {
+        "source_original": f"Curated BUSI binary\n{eligible} images",
+        "source_reviewed": (
+            f"Reviewed source cohort\n{source_total} images · B/M: "
+            f"{source_benign}/{source_malignant}{review_note}"
+        ),
+        "source_train": split_label("Source training", source[0]),
+        "source_val": split_label("Source validation", source[1]),
+        "source_test": split_label("Internal source test", source[2]),
+        "target_original": (
+            f"BUS-BRA\n{sum(int(item['images']) for item in target)} images · "
+            f"{sum(int(item['patients']) for item in target)} patients"
+        ),
+        "target_development": (
+            f"Historical development\n{development_images} images · {development_patients} patients"
+        ),
+        "target_adapt": split_label("Adaptation", adapt, patient_count=True),
+        "target_calibration": split_label("Calibration", calibration, patient_count=True),
+        "target_test": split_label("Historical external test", test, patient_count=True),
+    }
+
+
+def figure_cohort_flow(results: Path, cohorts: pd.DataFrame, output_dir: Path) -> list[Path]:
+    labels = _cohort_flow_labels(results, cohorts)
     fig, ax = plt.subplots(figsize=(8.6, 5.8))
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
@@ -165,7 +247,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
     ax.text(
         0.5,
         0.975,
-        "Flujo de cohortes y particiones del estudio",
+        "Study cohorts and frozen partitions",
         ha="center",
         va="top",
         fontsize=12,
@@ -174,7 +256,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
     ax.text(
         0.245,
         0.915,
-        "DOMINIO FUENTE",
+        "SOURCE DOMAIN",
         ha="center",
         va="center",
         fontsize=9,
@@ -184,7 +266,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
     ax.text(
         0.75,
         0.915,
-        "DOMINIO OBJETIVO",
+        "TARGET DOMAIN",
         ha="center",
         va="center",
         fontsize=9,
@@ -217,7 +299,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.05, 0.77),
         0.39,
         0.09,
-        "Curated BUSI v1.0\n450 imágenes",
+        labels["source_original"],
         facecolor="#E8F1FA",
         edgecolor="#0072B2",
         fontsize=8.5,
@@ -227,7 +309,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.55, 0.77),
         0.40,
         0.09,
-        "BUS-BRA\n1875 imágenes · 1064 pacientes",
+        labels["target_original"],
         facecolor="#FCEFE8",
         edgecolor="#D55E00",
         fontsize=8.5,
@@ -237,7 +319,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.05, 0.59),
         0.39,
         0.11,
-        "Cohorte binaria elegible\n386 imágenes · B/M: 222/164",
+        labels["source_reviewed"],
         facecolor="#E8F1FA",
         edgecolor="#0072B2",
         fontsize=8.5,
@@ -247,7 +329,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.06, 0.43),
         0.38,
         0.08,
-        "Entrenamiento fuente\n247 imágenes · B/M: 142/105",
+        labels["source_train"],
         facecolor="#F4F8FC",
         edgecolor="#0072B2",
         fontsize=8,
@@ -257,7 +339,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.06, 0.31),
         0.38,
         0.08,
-        "Validación fuente\n62 imágenes · B/M: 36/26",
+        labels["source_val"],
         facecolor="#F4F8FC",
         edgecolor="#0072B2",
         fontsize=8,
@@ -267,7 +349,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.06, 0.19),
         0.38,
         0.08,
-        "Prueba interna\n77 imágenes · B/M: 44/33",
+        labels["source_test"],
         facecolor="#F4F8FC",
         edgecolor="#0072B2",
         fontsize=8,
@@ -277,7 +359,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.55, 0.59),
         0.40,
         0.11,
-        "Desarrollo histórico\n1139 imágenes · 638 pacientes\nB/M (imágenes): 773/366",
+        labels["target_development"],
         facecolor="#FCF6F2",
         edgecolor="#D55E00",
         fontsize=8,
@@ -287,7 +369,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.52, 0.39),
         0.205,
         0.13,
-        "Adaptación\n946 imágenes\n532 pacientes\nB/M: 642/304",
+        labels["target_adapt"],
         facecolor="#FCF6F2",
         edgecolor="#D55E00",
         fontsize=8,
@@ -297,7 +379,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.75, 0.39),
         0.205,
         0.13,
-        "Calibración\n193 imágenes\n106 pacientes\nB/M: 131/62",
+        labels["target_calibration"],
         facecolor="#FCF6F2",
         edgecolor="#D55E00",
         fontsize=8,
@@ -307,9 +389,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
         (0.58, 0.17),
         0.36,
         0.12,
-        "Prueba externa histórica bloqueada\n"
-        "736 imágenes · 426 pacientes\n"
-        "B/M (imágenes): 495/241",
+        labels["target_test"],
         facecolor="#FFF3CD",
         edgecolor="#9C6B00",
         fontsize=8,
@@ -318,8 +398,7 @@ def figure_cohort_flow(output_dir: Path) -> list[Path]:
     ax.text(
         0.5,
         0.045,
-        "B/M = benignas/malignas. En BUS-BRA, B/M corresponde a imágenes; "
-        "las particiones no comparten pacientes.",
+        "B/M = benign/malignant images. BUS-BRA partitions are patient-disjoint.",
         ha="center",
         va="center",
         fontsize=8,
@@ -378,13 +457,13 @@ def figure_target_auc(ensemble: pd.DataFrame, output_dir: Path) -> list[Path]:
     ax.set_yticks(y_positions, labels)
     ax.invert_yaxis()
     ax.grid(axis="x", color="#DDDDDD", linewidth=0.7)
-    ax.set_xlabel("ROC-AUC por paciente (IC del 95 %)")
-    ax.set_title("Discriminación en la prueba externa histórica")
+    ax.set_xlabel("Patient-level AUROC (95% CI)")
+    ax.set_title("Discrimination on the historical external test")
     ax.text(
         0.0,
         -0.16,
-        "IC: 5000 remuestreos bootstrap estratificados por paciente. "
-        "La línea discontinua indica discriminación aleatoria.",
+        "CIs: 5,000 stratified patient bootstrap resamples. "
+        "The dashed line indicates chance discrimination.",
         transform=ax.transAxes,
         fontsize=8,
     )
@@ -438,13 +517,13 @@ def figure_uda_differences(
     ax.set_yticks(y, labels)
     ax.invert_yaxis()
     ax.grid(axis="x", color="#DDDDDD", linewidth=0.7)
-    ax.set_xlabel("Diferencia de ROC-AUC (método − control fuente emparejado)")
-    ax.set_title("Comparaciones no supervisadas emparejadas")
+    ax.set_xlabel("AUROC difference (method − matched source control)")
+    ax.set_title("Paired unsupervised-adaptation comparisons")
     ax.text(
         0.0,
         -0.20,
-        "IC por bootstrap pareado. Las estimaciones exactas y los valores p de DeLong "
-        "corregidos mediante Holm se presentan en la Tabla 3.",
+        "Paired bootstrap CIs. Exact estimates and Holm-adjusted DeLong p values "
+        "are reported in Table 3.",
         transform=ax.transAxes,
         fontsize=8,
     )
@@ -523,16 +602,16 @@ def figure_finetune(
         min(1.0, float(data["auc_raw"].max()) + 0.03),
     )
     ax.grid(axis="y", color="#DDDDDD", linewidth=0.7)
-    ax.set_xlabel("Presupuesto de pacientes objetivo etiquetados")
-    ax.set_ylabel("ROC-AUC por paciente")
-    ax.set_title("Ajuste fino: réplicas y media ± DE")
+    ax.set_xlabel("Labeled target-patient budget")
+    ax.set_ylabel("Patient-level AUROC")
+    ax.set_title("Fine-tuning: replicates and mean ± SD")
     ax.legend(frameon=False)
-    seed_list = ", ".join(str(seed) for seed in seed_values[:-1]) + f" y {seed_values[-1]}"
+    seed_list = ", ".join(str(seed) for seed in seed_values[:-1]) + f" and {seed_values[-1]}"
     ax.text(
         0.0,
         -0.18,
-        f"Los puntos tenues son réplicas (semillas {seed_list}). Cada réplica usa una "
-        "cohorte anidada distinta; no se formó un ensamble.",
+        f"Faint points are replicates (seeds {seed_list}). Each replicate uses a "
+        "different nested training cohort; no ensemble was formed.",
         transform=ax.transAxes,
         fontsize=8,
     )
@@ -574,8 +653,8 @@ def figure_reliability(results: Path, output_dir: Path) -> list[Path]:
             )
             y_true = table["label_idx"].to_numpy(dtype=int)
             for column, label, color, marker in (
-                ("probability_raw", "Cruda", "#999999", "o"),
-                ("probability_calibrated", "Calibrada", ARCH_COLORS[architecture], "s"),
+                ("probability_raw", "Raw", "#999999", "o"),
+                ("probability_calibrated", "Calibrated", ARCH_COLORS[architecture], "s"),
             ):
                 predicted, observed, _ = _reliability_points(
                     y_true,
@@ -589,9 +668,9 @@ def figure_reliability(results: Path, output_dir: Path) -> list[Path]:
             )
             ax.grid(color="#E5E5E5", linewidth=0.5)
             if column_index == 0:
-                ax.set_ylabel("Frecuencia observada")
+                ax.set_ylabel("Observed frequency")
             if row_index == 1:
-                ax.set_xlabel("Riesgo predicho")
+                ax.set_xlabel("Predicted risk")
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(
         handles,
@@ -602,14 +681,14 @@ def figure_reliability(results: Path, output_dir: Path) -> list[Path]:
         frameon=False,
     )
     fig.suptitle(
-        "Curvas de fiabilidad descriptivas en la prueba objetivo (10 intervalos)",
+        "Descriptive reliability curves on target test (10 bins)",
         fontsize=12,
     )
     fig.text(
         0.5,
         0.015,
-        "Cada punto representa un intervalo no vacío. La calibración se ajustó exclusivamente "
-        "en la cohorte de calibración separada.",
+        "Each point represents a nonempty bin. Calibration was fitted only "
+        "on the separate calibration cohort.",
         ha="center",
         fontsize=8,
     )
@@ -630,12 +709,12 @@ def _patient_count(frame: pd.DataFrame, label_idx: int | None = None) -> int | s
 
 def table_cohorts(results: Path) -> pd.DataFrame:
     specifications = (
-        ("Curated BUSI", "Entrenamiento fuente", "source_train_manifest.csv"),
-        ("Curated BUSI", "Ajuste fuente", "source_val_manifest.csv"),
-        ("Curated BUSI", "Prueba interna", "source_test_manifest.csv"),
-        ("BUS-BRA", "Adaptación", "target_adapt_manifest.csv"),
-        ("BUS-BRA", "Calibración", "target_calibration_manifest.csv"),
-        ("BUS-BRA", "Prueba externa histórica", "target_test_manifest.csv"),
+        ("Curated BUSI", "Source training", "source_train_manifest.csv"),
+        ("Curated BUSI", "Source validation", "source_val_manifest.csv"),
+        ("Curated BUSI", "Source internal test", "source_test_manifest.csv"),
+        ("BUS-BRA", "Target adaptation", "target_adapt_manifest.csv"),
+        ("BUS-BRA", "Target calibration", "target_calibration_manifest.csv"),
+        ("BUS-BRA", "Historical external test", "target_test_manifest.csv"),
     )
     rows: list[dict[str, object]] = []
     for dataset, cohort, filename in specifications:
@@ -739,6 +818,35 @@ def _format_interval(row: pd.Series) -> str:
     return f"{float(row['estimate']):.3f} ({float(row['ci_low']):.3f}–{float(row['ci_high']):.3f})"
 
 
+def _v3_supplement_tables(tables: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    """Expose the distinct secondary family and descriptive sensitivity panels."""
+    families = tables["v3_method_families"]
+    secondary = families[families["family"].eq("secondary")].copy()
+    if len(secondary) != 6:
+        raise ValueError("The v3 supplement requires six secondary Holm comparisons.")
+    sensitivity = tables["v3_hyperparameter_sensitivity"]
+    if len(sensitivity) != 45:
+        raise ValueError("The v3 supplement requires 45 sensitivity observations.")
+    thresholds = tables["v3_threshold_sensitivity"]
+    if len(thresholds) != 60:
+        raise ValueError("The v3 supplement requires 60 frozen-threshold rows.")
+    return {
+        "tabla_s7_controles.csv": secondary,
+        "tabla_s8_sensibilidad.csv": sensitivity,
+        "tabla_s9_umbrales.csv": thresholds,
+    }
+
+
+def _replica_metrics_table(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    """Include all 160 v3 variants, not only the 80 primary-matrix replicates."""
+    if "all_variant_metrics" in tables:
+        variants = tables["all_variant_metrics"]
+        if len(variants) != 160:
+            raise ValueError("The v3 replicate table requires all 160 variants.")
+        return variants
+    return tables["per_seed_metrics"]
+
+
 def build_tables(
     results: Path,
     tables: dict[str, pd.DataFrame],
@@ -822,8 +930,10 @@ def build_tables(
 
     table_map["tabla_s2_metricas_objetivo_completas.csv"] = tables["ensemble_metrics"]
     table_map["tabla_s3_metricas_fuente.csv"] = tables["source_ensemble_metrics"]
-    table_map["tabla_s4_metricas_por_replica.csv"] = tables["per_seed_metrics"]
+    table_map["tabla_s4_metricas_por_replica.csv"] = _replica_metrics_table(tables)
     table_map["tabla_s5_calibracion.csv"] = tables["target_calibration_diagnostics"]
+    if "v3_method_families" in tables:
+        table_map.update(_v3_supplement_tables(tables))
 
     for filename, table in table_map.items():
         path = output_dir / filename
@@ -855,7 +965,7 @@ def main() -> None:
     table_dir = results / "publication_tables"
 
     written: list[Path] = []
-    written.extend(figure_cohort_flow(figure_dir))
+    written.extend(figure_cohort_flow(results, table_cohorts(results), figure_dir))
     written.extend(figure_target_auc(tables["ensemble_metrics"], figure_dir))
     written.extend(
         figure_uda_differences(

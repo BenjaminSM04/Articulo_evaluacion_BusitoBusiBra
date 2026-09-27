@@ -162,6 +162,7 @@ def test_vectorized_bootstrap_matches_direct_metric_calculation():
         0.5,
         plan,
     )
+    assert {"nll_raw", "nll_calibrated"}.issubset(observed)
     for replicate, indices in enumerate(plan):
         expected = confirmatory_metric_values(
             labels[indices],
@@ -252,13 +253,28 @@ def test_locked_artifact_inventory_detects_missing_changed_and_escaping_files(tm
         ),
     ],
 )
+@pytest.mark.parametrize("use_v3_ids", [False, True])
 def test_end_to_end_synthetic_analysis_writes_all_tables(
-    tmp_path, seeds, ensemble_variant, ensemble_estimand
+    tmp_path, seeds, ensemble_variant, ensemble_estimand, use_v3_ids
 ):
     prediction_root = tmp_path / "predictions"
     output_dir = tmp_path / "analysis"
     architecture = "resnet18"
     methods = (*ENSEMBLE_METHODS, "finetune_5pct")
+    prediction_names = (
+        {
+            (architecture, method, seed): f"main_{architecture}_seed{seed}_{method}"
+            for method in methods
+            for seed in seeds
+        }
+        if use_v3_ids
+        else None
+    )
+
+    def prediction_stem(method, seed):
+        if prediction_names is None:
+            return f"{architecture}_{method}_seed{seed}"
+        return prediction_names[(architecture, method, seed)]
     rng = np.random.default_rng(2026)
     calibration_labels = np.array([0] * 12 + [1] * 12)
     test_labels = np.array([0] * 20 + [1] * 20)
@@ -287,7 +303,7 @@ def test_end_to_end_synthetic_analysis_writes_all_tables(
                     seed=seed,
                 ).sample(frac=1.0, random_state=seed + method_index)
                 table.to_csv(
-                    directory / f"{architecture}_{method}_seed{seed}.csv",
+                    directory / f"{prediction_stem(method, seed)}.csv",
                     index=False,
                 )
 
@@ -316,7 +332,7 @@ def test_end_to_end_synthetic_analysis_writes_all_tables(
                     seed=seed,
                 ).sample(frac=1.0, random_state=seed + method_index)
                 table.to_csv(
-                    directory / f"{architecture}_{method}_seed{seed}.csv",
+                    directory / f"{prediction_stem(method, seed)}.csv",
                     index=False,
                 )
 
@@ -331,6 +347,7 @@ def test_end_to_end_synthetic_analysis_writes_all_tables(
         bootstrap_seed=99,
         require_six_uda_comparisons=False,
         expected_finalization_fingerprint="test-fingerprint",
+        prediction_names=prediction_names,
     )
     assert all(path.exists() for path in outputs.values())
 
@@ -344,9 +361,10 @@ def test_end_to_end_synthetic_analysis_writes_all_tables(
     finetune_replicas = pd.read_csv(outputs["finetune_replica_metrics"])
     finetune_summary = pd.read_csv(outputs["finetune_summary"])
     assert len(per_seed) == len(methods) * len(seeds)
-    assert len(ensemble) == len(ENSEMBLE_METHODS) * 10
+    assert len(ensemble) == len(ENSEMBLE_METHODS) * 12
     assert len(source_ensemble) == len(ENSEMBLE_METHODS) * 7
-    assert len(paired) == len(UDA_METHODS) * 10
+    assert len(paired) == len(UDA_METHODS) * 12
+    assert not paired.loc[paired["metric"].str.startswith("nll_"), "higher_is_better"].any()
     assert len(delong) == len(UDA_METHODS)
     assert len(calibration) == len(methods) * len(seeds) + len(ENSEMBLE_METHODS)
     assert len(diagnostics) == len(ENSEMBLE_METHODS)
@@ -393,7 +411,7 @@ def test_end_to_end_synthetic_analysis_writes_all_tables(
     mismatched_path = (
         prediction_root
         / "target_calibration_patients"
-        / f"{architecture}_{ENSEMBLE_METHODS[0]}_seed{seeds[0]}.csv"
+        / f"{prediction_stem(ENSEMBLE_METHODS[0], seeds[0])}.csv"
     )
     mismatched = pd.read_csv(mismatched_path)
     mismatched["finalization_fingerprint_sha256"] = "different-run"
@@ -410,4 +428,5 @@ def test_end_to_end_synthetic_analysis_writes_all_tables(
             bootstrap_seed=99,
             require_six_uda_comparisons=False,
             expected_finalization_fingerprint="test-fingerprint",
+            prediction_names=prediction_names,
         )

@@ -10,6 +10,11 @@ Estado documentado el 26 de septiembre de 2026.
 - Artefactos: 150 checkpoints entrenados y 10 transformaciones AdaBN.
 - Duración acumulada registrada: 2,931176 horas.
 - El índice conserva la huella SHA-256 de cada checkpoint.
+- Las 160 huellas de checkpoint se volvieron a verificar el 27 de septiembre.
+- `effective_config.yaml` se normalizó de CRLF a LF sin cambiar valores: la
+  huella resultante `2f62d00c1c248962ee701bdfff92a9c05e8e2e65c3cc3630b983d2a93e66df7f`
+  coincide con la procedencia del entrenamiento. El texto con CRLF tenía una
+  huella distinta por la conversión automática de saltos de línea de Windows.
 
 ResNet-50 y DenseNet-121 pertenecen al estudio histórico de cuatro
 arquitecturas. No forman parte de la matriz v3 de cinco semillas. No se utilizó

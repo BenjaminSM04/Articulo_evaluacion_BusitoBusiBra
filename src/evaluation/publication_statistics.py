@@ -45,6 +45,8 @@ from .publication_protocol import (
 CONFIRMATORY_METRICS = (
     "auc_raw",
     "pr_auc_raw",
+    "nll_raw",
+    "nll_calibrated",
     "brier_raw",
     "brier_calibrated",
     "risk_ece_raw",
@@ -334,9 +336,9 @@ def read_source_prediction_csv(
 
 def _validated_ensemble_seeds(seeds: Sequence[int]) -> tuple[int, ...]:
     ordered_seeds = tuple(int(seed) for seed in seeds)
-    if (len(ordered_seeds) != 3 and len(ordered_seeds) < 5) or len(
-        set(ordered_seeds)
-    ) != len(ordered_seeds):
+    if (len(ordered_seeds) != 3 and len(ordered_seeds) < 5) or len(set(ordered_seeds)) != len(
+        ordered_seeds
+    ):
         raise ValueError("An ensemble requires three historical or at least five distinct seeds.")
     return ordered_seeds
 
@@ -391,8 +393,7 @@ def align_seed_predictions(
             missing = sorted(set(patient_order) - set(current.index))
             extra = sorted(set(current.index) - set(patient_order))
             raise ValueError(
-                f"{source}/seed={seed} patient mismatch; "
-                f"missing={missing[:5]}, extra={extra[:5]}."
+                f"{source}/seed={seed} patient mismatch; missing={missing[:5]}, extra={extra[:5]}."
             )
         current = current.loc[patient_order]
         for column in ("label", "label_idx"):
@@ -442,8 +443,7 @@ def align_source_seed_predictions(
             missing = sorted(set(sample_order) - set(current.index))
             extra = sorted(set(current.index) - set(sample_order))
             raise ValueError(
-                f"{source}/seed={seed} sample mismatch; "
-                f"missing={missing[:5]}, extra={extra[:5]}."
+                f"{source}/seed={seed} sample mismatch; missing={missing[:5]}, extra={extra[:5]}."
             )
         current = current.loc[sample_order]
         for column in ("label", "label_idx"):
@@ -496,6 +496,8 @@ def confirmatory_metric_values(
     return {
         "auc_raw": float(roc_auc_score(y_true, probability_raw)),
         "pr_auc_raw": float(average_precision_score(y_true, probability_raw)),
+        "nll_raw": binary_nll(y_true, probability_raw),
+        "nll_calibrated": binary_nll(y_true, probability_calibrated),
         "brier_raw": float(brier_score_loss(y_true, probability_raw)),
         "brier_calibrated": float(brier_score_loss(y_true, probability_calibrated)),
         "risk_ece_raw": float(risk_ece(y_true, probability_raw)),
@@ -777,9 +779,20 @@ def bootstrap_metric_distributions(
         out=np.zeros(len(f1_denominator), dtype=float),
         where=f1_denominator != 0,
     )
+    raw_clipped = np.clip(sampled_raw, 1e-15, 1 - 1e-15)
+    calibrated_clipped = np.clip(sampled_calibrated, 1e-15, 1 - 1e-15)
     return {
         "auc_raw": auc.astype(float, copy=False),
         "pr_auc_raw": pr_auc,
+        "nll_raw": -np.mean(
+            sampled_labels * np.log(raw_clipped) + (1 - sampled_labels) * np.log1p(-raw_clipped),
+            axis=1,
+        ),
+        "nll_calibrated": -np.mean(
+            sampled_labels * np.log(calibrated_clipped)
+            + (1 - sampled_labels) * np.log1p(-calibrated_clipped),
+            axis=1,
+        ),
         "brier_raw": np.mean((sampled_raw - sampled_labels) ** 2, axis=1),
         "brier_calibrated": np.mean((sampled_calibrated - sampled_labels) ** 2, axis=1),
         "risk_ece_raw": _bootstrap_risk_ece(sampled_labels, sampled_raw),
@@ -1103,6 +1116,17 @@ def compare_v3_method_families(
     return rows
 
 
+def _prediction_stem(
+    architecture: str,
+    method: str,
+    seed: int,
+    prediction_names: Mapping[tuple[str, str, int], str] | None,
+) -> str:
+    if prediction_names is None:
+        return f"{architecture}_{method}_seed{seed}"
+    return prediction_names[(architecture, method, seed)]
+
+
 def _load_cohort_seed_tables(
     prediction_root: Path,
     cohort: str,
@@ -1110,11 +1134,13 @@ def _load_cohort_seed_tables(
     architecture: str,
     method: str,
     seeds: Sequence[int],
+    prediction_names: Mapping[tuple[str, str, int], str] | None = None,
 ) -> dict[int, pd.DataFrame]:
     directory = prediction_root / cohort
     return {
         int(seed): read_patient_prediction_csv(
-            directory / f"{architecture}_{method}_seed{int(seed)}.csv",
+            directory
+            / f"{_prediction_stem(architecture, method, int(seed), prediction_names)}.csv",
             architecture=architecture,
             method=method,
             seed=int(seed),
@@ -1130,11 +1156,13 @@ def _load_source_seed_tables(
     architecture: str,
     method: str,
     seeds: Sequence[int],
+    prediction_names: Mapping[tuple[str, str, int], str] | None = None,
 ) -> dict[int, pd.DataFrame]:
     directory = prediction_root / cohort
     return {
         int(seed): read_source_prediction_csv(
-            directory / f"{architecture}_{method}_seed{int(seed)}.csv",
+            directory
+            / f"{_prediction_stem(architecture, method, int(seed), prediction_names)}.csv",
             architecture=architecture,
             method=method,
             seed=int(seed),
@@ -1226,14 +1254,14 @@ def _write_markdown_report(
         )
     ].copy()
     target_display["estimación (IC95%)"] = target_display.apply(
-        lambda row: (f"{row['estimate']:.3f} " f"({row['ci_low']:.3f}–{row['ci_high']:.3f})"),
+        lambda row: f"{row['estimate']:.3f} ({row['ci_low']:.3f}–{row['ci_high']:.3f})",
         axis=1,
     )
     source_display = source_ensemble_metrics[
         source_ensemble_metrics["metric"].isin(("auc_raw", "pr_auc_raw", "brier_raw"))
     ].copy()
     source_display["estimación (IC95%)"] = source_display.apply(
-        lambda row: (f"{row['estimate']:.3f} " f"({row['ci_low']:.3f}–{row['ci_high']:.3f})"),
+        lambda row: f"{row['estimate']:.3f} ({row['ci_low']:.3f}–{row['ci_high']:.3f})",
         axis=1,
     )
     paired_auc = paired_differences[paired_differences["metric"].eq("auc_raw")].copy()
@@ -1341,6 +1369,7 @@ def analyze_publication_predictions(
     bootstrap_seed: int = 20260723,
     require_six_uda_comparisons: bool = True,
     expected_finalization_fingerprint: str | None = None,
+    prediction_names: Mapping[tuple[str, str, int], str] | None = None,
 ) -> dict[str, Path]:
     """Run and persist the full confirmatory post-inference analysis."""
     prediction_root = Path(prediction_root)
@@ -1397,6 +1426,7 @@ def analyze_publication_predictions(
                 architecture=architecture,
                 method=method,
                 seeds=seeds,
+                prediction_names=prediction_names,
             )
             _assert_prediction_fingerprint(
                 calibration_tables,
@@ -1414,6 +1444,7 @@ def analyze_publication_predictions(
                 architecture=architecture,
                 method=method,
                 seeds=seeds,
+                prediction_names=prediction_names,
             )
             _assert_prediction_fingerprint(
                 test_tables,
@@ -1552,6 +1583,7 @@ def analyze_publication_predictions(
                 architecture=architecture,
                 method=method,
                 seeds=seeds,
+                prediction_names=prediction_names,
             )
             _assert_prediction_fingerprint(
                 source_val_tables,
@@ -1569,6 +1601,7 @@ def analyze_publication_predictions(
                 architecture=architecture,
                 method=method,
                 seeds=seeds,
+                prediction_names=prediction_names,
             )
             _assert_prediction_fingerprint(
                 source_test_tables,
@@ -1733,7 +1766,7 @@ def analyze_publication_predictions(
                         "ci_high": upper,
                         "bootstrap_p_value": paired_bootstrap_pvalue(difference_distribution),
                         "n_bootstrap": int(n_bootstrap),
-                        "higher_is_better": not metric.startswith(("brier_", "risk_ece_")),
+                        "higher_is_better": not metric.startswith(("nll_", "brier_", "risk_ece_")),
                         "unit": "patient",
                     }
                 )
